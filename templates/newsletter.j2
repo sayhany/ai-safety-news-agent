@@ -1,0 +1,61 @@
+# AI Safety Newsletter
+*{{ date | strftime('%B %d, %Y') }}*
+
+---
+
+## Executive Summary
+
+This newsletter covers {{ articles | length }} key developments in AI safety from {{ start_date }} to {{ date }}. 
+
+**Highlights:**
+{% for article in articles[:3] %}
+- {{ article.headline }}
+{% endfor %}
+
+---
+
+## Top Stories
+
+{% for article in articles %}
+### {{ loop.index }}. {{ article.headline }}
+
+{{ article.summary }}
+
+**Category:** {{ article.category }} | **Importance:** {{ article.importance }}/5 | **Source:** [{{ article.source }}]({{ article.url }})
+
+{% if not loop.last %}---{% endif %}
+
+{% endfor %}
+
+---
+
+## Summary by Category
+
+{% set categories = articles | groupby('category') %}
+{% for category, category_articles in categories %}
+### {{ category }}
+{% for article in category_articles %}
+- **{{ article.headline }}** ({{ article.source }})
+{% endfor %}
+
+{% endfor %}
+
+---
+
+## Methodology
+
+This newsletter was generated using an automated AI safety news aggregation system that:
+
+1. **Sources**: Monitors {{ sources_count }} approved news sources including government agencies, academic institutions, and major news outlets
+2. **Filtering**: Uses keyword matching and LLM-based relevance scoring to identify AI safety content
+3. **Deduplication**: Employs semantic similarity (threshold ≥{{ dedupe_threshold }}) to remove duplicate stories
+4. **Ranking**: Applies weighted scoring based on source priority ({{ w_source }}), recency ({{ w_recency }}), government sources ({{ w_gov }}), and LLM importance assessment ({{ w_llm }})
+5. **Summarization**: Generates structured summaries with headlines ≤100 characters and bullet points ≤35 words each
+
+**Coverage Period:** {{ start_date }} to {{ date }}  
+**Articles Processed:** {{ total_articles_processed }}  
+**Final Selection:** {{ articles | length }} articles  
+
+---
+
+*Generated on {{ generation_date | strftime('%Y-%m-%d at %H:%M UTC') }} by AI Safety Newsletter Agent v{{ version }}*

@@ -1,0 +1,120 @@
+# LLM Model Configuration for AI Safety Newsletter Agent
+
+# Summarization models (for article summaries and newsletter generation)
+summarizer:
+  primary: "anthropic/claude-3-haiku"
+  fallback:
+    - "openai/gpt-4o-mini"
+    - "meta-llama/llama-3.1-8b-instruct"
+    - "google/gemini-flash-1.5"
+
+# Relevance filtering models (for AI safety content classification)
+relevance:
+  primary: "openai/gpt-4o-mini"
+  fallback:
+    - "anthropic/claude-3-haiku"
+    - "meta-llama/llama-3.1-8b-instruct"
+
+# Importance scoring models (for article ranking)
+importance:
+  primary: "anthropic/claude-3-haiku"
+  fallback:
+    - "openai/gpt-4o-mini"
+
+# Model-specific settings
+model_settings:
+  temperature: 0.2
+  max_tokens: 2048
+  timeout_seconds: 40
+  retry_attempts: 3
+  backoff_factor: 2
+
+# Source priority mapping (for scoring weights)
+source_priorities:
+  # Government and official sources (highest priority)
+  "whitehouse.gov": 1.0
+  "nist.gov": 1.0
+  "fda.gov": 1.0
+  "sec.gov": 1.0
+  "ftc.gov": 1.0
+  
+  # Academic and research institutions
+  "arxiv.org": 0.9
+  "nature.com": 0.9
+  "science.org": 0.9
+  "mit.edu": 0.9
+  "stanford.edu": 0.9
+  "berkeley.edu": 0.9
+  
+  # Major news outlets
+  "reuters.com": 0.8
+  "apnews.com": 0.8
+  "bbc.com": 0.8
+  "npr.org": 0.8
+  "wsj.com": 0.8
+  "nytimes.com": 0.8
+  
+  # Tech industry sources
+  "techcrunch.com": 0.7
+  "arstechnica.com": 0.7
+  "wired.com": 0.7
+  "theverge.com": 0.7
+  
+  # AI safety organizations
+  "anthropic.com": 0.9
+  "openai.com": 0.9
+  "deepmind.com": 0.9
+  "fhi.ox.ac.uk": 0.9
+  "alignmentforum.org": 0.8
+  
+  # Default priority for unlisted sources
+  default: 0.5
+
+# RSS feed sources for AI safety news
+approved_sources:
+  - url: "https://feeds.reuters.com/reuters/technologyNews"
+    domain: "reuters.com"
+    category: "technology"
+    
+  - url: "https://rss.cnn.com/rss/edition.rss"
+    domain: "cnn.com" 
+    category: "general"
+    
+  - url: "https://feeds.bbci.co.uk/news/technology/rss.xml"
+    domain: "bbc.com"
+    category: "technology"
+    
+  - url: "https://www.wired.com/feed/category/business/ai/rss"
+    domain: "wired.com"
+    category: "ai"
+
+# AI safety keywords for relevance filtering
+ai_safety_keywords:
+  primary:
+    - "artificial intelligence safety"
+    - "AI safety"
+    - "AI alignment"
+    - "AI governance"
+    - "AI regulation"
+    - "AI ethics"
+    - "AI risk"
+    - "AI policy"
+    - "machine learning safety"
+    - "algorithmic bias"
+    - "AI transparency"
+    - "AI accountability"
+    - "AI oversight"
+    - "responsible AI"
+    - "AI standards"
+    
+  secondary:
+    - "automated decision"
+    - "algorithmic fairness"
+    - "AI audit"
+    - "AI testing"
+    - "AI certification"
+    - "AI liability"
+    - "AI compliance"
+    - "AI monitoring"
+    - "AI impact assessment"
+    - "AI red team"

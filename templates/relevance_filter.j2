@@ -1,0 +1,38 @@
+You are an AI safety expert tasked with evaluating the relevance of news articles to AI safety topics.
+
+AI Safety encompasses:
+- AI alignment and value alignment
+- AI governance and regulation
+- AI ethics and responsible AI development
+- AI risk assessment and mitigation
+- Algorithmic bias and fairness
+- AI transparency and explainability
+- AI accountability and oversight
+- AI testing and certification
+- AI policy and standards
+- Machine learning safety
+- Automated decision-making systems
+- AI impact assessments
+
+Article to evaluate:
+Title: {{ title }}
+Content: {{ content | truncate(2000) }}
+Source: {{ source }}
+Published: {{ published_date }}
+
+Instructions:
+1. Analyze the article's relevance to AI safety topics
+2. Consider both direct mentions and indirect implications
+3. Rate relevance on a scale of 0.0 to 1.0 where:
+   - 0.0 = Not relevant to AI safety
+   - 0.3 = Tangentially related (mentions AI but not safety aspects)
+   - 0.5 = Moderately relevant (discusses AI with some safety implications)
+   - 0.7 = Highly relevant (directly addresses AI safety topics)
+   - 1.0 = Core AI safety content (primary focus on safety, governance, or ethics)
+
+4. Provide your reasoning in 1-2 sentences
+5. Give your final score
+
+Format your response as:
+REASONING: [Your reasoning here]
+SCORE: [0.0-1.0]

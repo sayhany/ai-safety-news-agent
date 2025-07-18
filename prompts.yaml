@@ -1,0 +1,88 @@
+# LLM Prompt Templates Configuration
+
+# System prompts for different LLM roles
+system_prompts:
+  relevance_filter: |
+    You are an AI safety expert who evaluates news articles for relevance to AI safety, governance, ethics, and policy topics. You provide accurate, objective assessments based on content analysis.
+  
+  summarizer: |
+    You are a professional news summarizer specializing in AI safety and technology policy. You create concise, informative summaries that highlight key developments and their implications.
+  
+  importance_assessor: |
+    You are an AI safety analyst who evaluates the significance and potential impact of news developments on the AI safety ecosystem, policy landscape, and industry practices.
+
+# Template configurations
+templates:
+  relevance_filter:
+    file: "templates/relevance_filter.j2"
+    max_tokens: 500
+    temperature: 0.1
+    
+  article_summary:
+    file: "templates/article_summary.j2"
+    max_tokens: 800
+    temperature: 0.2
+    
+  importance_assessment:
+    file: "templates/importance_assessment.j2"
+    max_tokens: 400
+    temperature: 0.1
+    
+  newsletter:
+    file: "templates/newsletter.j2"
+    # Newsletter is rendered locally, not via LLM
+
+# Prompt validation rules
+validation:
+  max_content_length: 3000  # Maximum article content length for LLM processing
+  required_fields:
+    relevance_filter: ["title", "content", "source", "published_date"]
+    article_summary: ["title", "content", "source", "published_date"]
+    importance_assessment: ["title", "content", "source", "category"]
+    newsletter: ["articles", "date", "start_date"]
+
+# Response parsing patterns
+response_patterns:
+  relevance_score:
+    pattern: "SCORE:\\s*([0-9]*\\.?[0-9]+)"
+    type: "float"
+    default: 0.0
+    
+  importance_score:
+    pattern: "IMPORTANCE:\\s*([1-5])"
+    type: "int"
+    default: 1
+    
+  reasoning:
+    pattern: "REASONING:\\s*(.+?)(?=\\n|$)"
+    type: "string"
+    default: "No reasoning provided"
+
+# Content processing settings
+processing:
+  headline_max_chars: 100
+  bullet_max_words: 35
+  max_bullets: 3
+  summary_max_chars: 500
+  
+  # Text cleaning options
+  clean_html: true
+  normalize_whitespace: true
+  remove_extra_punctuation: true
+
+# Quality checks
+quality_checks:
+  min_headline_length: 10
+  min_bullet_length: 5
+  max_summary_length: 600
+  required_summary_sections: ["headline", "bullets", "category", "importance"]
+
+# Fallback responses
+fallbacks:
+  relevance_score: 0.0
+  importance_score: 1
+  category: "Technology"
+  headline: "AI Development Update"
+  summary_bullets:
+    - "New development in AI technology reported"
+    - "Implications for AI safety under evaluation"

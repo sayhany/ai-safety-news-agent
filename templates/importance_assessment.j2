@@ -1,0 +1,51 @@
+You are an AI safety expert evaluating the importance and impact of news developments.
+
+Article to assess:
+Title: {{ title }}
+Content: {{ content | truncate(1500) }}
+Source: {{ source }}
+Category: {{ category }}
+
+Assessment Criteria:
+Rate the importance of this development on a scale of 1-5:
+
+**5 - Critical/Breakthrough**: 
+- Major policy announcements or regulatory changes
+- Breakthrough research with significant safety implications  
+- Large-scale AI deployments with safety concerns
+- International agreements or standards
+
+**4 - Major Development**:
+- Significant corporate AI safety initiatives
+- Important research findings
+- Notable regulatory proposals
+- High-profile safety incidents or concerns
+
+**3 - Significant Development**:
+- Meaningful industry developments
+- Relevant research publications
+- Policy discussions or hearings
+- Technology updates with safety implications
+
+**2 - Notable Development**:
+- Routine industry updates
+- Academic papers with limited immediate impact
+- Minor policy discussions
+- Standard product announcements
+
+**1 - Minor Update**:
+- Routine news or updates
+- Limited scope or impact
+- Primarily commercial focus
+- No clear safety implications
+
+Consider:
+- Scale of potential impact on AI safety
+- Relevance to current policy discussions
+- Influence on industry practices
+- Long-term implications for AI governance
+
+Provide your assessment:
+
+REASONING: [2-3 sentences explaining your rating]
+IMPORTANCE: [1-5]
