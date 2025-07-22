@@ -21,7 +21,15 @@ class SourceConfig(BaseModel):
     domain: str
     category: str
     priority: float = 0.5
-
+    fallback_urls: List[str] = Field(default_factory=list)
+    
+class SearchSourceConfig(BaseModel):
+    """Search-based source configuration."""
+    name: str
+    api: str
+    query: str
+    date_range: int = 7
+    priority: float = 0.5
 
 class ModelSettings(BaseModel):
     """LLM model-specific settings."""
@@ -36,8 +44,19 @@ class Settings(BaseSettings):
     """Main application settings."""
     
     # ── LLM Configuration ──────────────────────────────────────────────────
-    openrouter_api_key: str = Field(..., description="OpenRouter API key")
-    
+    llm_model_override: Optional[str] = Field(
+        None, description="Override for the LLM model"
+    )
+    openai_api_key: Optional[str] = Field(None, description="OpenAI API key for LLM and embeddings (primary)")
+    brave_api_key: Optional[str] = Field(None, description="Brave Search API key")
+    bing_api_key: Optional[str] = Field(None, description="Bing Search API key")
+    exa_api_key: Optional[str] = Field(None, description="Exa Search API key")
+    google_ai_api_key: Optional[str] = Field(None, description="Google AI (Gemini) API key for LLM and embeddings (fallback)")
+    llm: ModelSettings = Field(default_factory=ModelSettings, description="LLM settings")
+
+    # ── Operational Mode ───────────────────────────────────────────────────
+    mock: bool = Field(False, description="Use mock data and clients")
+
     # ── Ingestion Settings ─────────────────────────────────────────────────
     max_per_domain: int = Field(10, description="Max concurrent requests per domain")
     global_parallel: int = Field(30, description="Global semaphore limit")
@@ -59,6 +78,7 @@ class Settings(BaseSettings):
     # ── Processing Settings ────────────────────────────────────────────────
     dedupe_threshold: float = Field(0.85, description="Vector similarity threshold")
     max_articles: int = Field(20, description="Maximum articles in newsletter")
+    use_embedding_deduplication: bool = Field(True, description="Enable embedding-based deduplication using Gemini")
     
     # ── API Settings ───────────────────────────────────────────────────────
     api_port: int = Field(8000, description="HTTP API port")
@@ -75,7 +95,8 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
-        case_sensitive=False
+        case_sensitive=False,
+        extra="ignore",  # Allow extra fields like 'mock' without validation error
     )
     
     @field_validator("data_dir", "cache_dir")
@@ -139,6 +160,11 @@ class ModelConfig:
         """Get approved news sources."""
         sources_data = self._config.get("approved_sources", [])
         return [SourceConfig(**source) for source in sources_data]
+
+    def get_search_sources(self) -> List[SearchSourceConfig]:
+        """Get search-based news sources."""
+        sources_data = self._config.get("search_sources", [])
+        return [SearchSourceConfig(**source) for source in sources_data]
     
     def get_ai_safety_keywords(self) -> Dict[str, List[str]]:
         """Get AI safety keywords for filtering."""
@@ -148,6 +174,9 @@ class ModelConfig:
 # Global instances
 settings = Settings()
 model_config = ModelConfig()
+
+# Populate settings with model config
+settings.llm = model_config.get_model_settings()
 
 
 def get_settings() -> Settings:
@@ -160,29 +189,30 @@ def get_model_config() -> ModelConfig:
     return model_config
 
 
-def validate_config() -> bool:
+def validate_config(settings: Settings) -> bool:
     """Validate configuration completeness."""
     try:
-        # Check required settings
-        if not settings.openrouter_api_key:
-            raise ValueError("OPENROUTER_API_KEY is required")
-        
+        # Check required settings if not in mock mode
+        if not settings.mock and not settings.google_ai_api_key:
+            raise ValueError("GOOGLE_AI_API_KEY is required when not in mock mode")
+
         # Validate weight sum (should be close to 1.0)
         weight_sum = (
-            settings.w_source_priority +
-            settings.w_recency +
-            settings.w_gov +
-            settings.w_llm_importance
+            settings.w_source_priority
+            + settings.w_recency
+            + settings.w_gov
+            + settings.w_llm_importance
         )
         if abs(weight_sum - 1.0) > 0.01:
             raise ValueError(f"Scoring weights sum to {weight_sum}, should be 1.0")
-        
+
         # Check model config
+        model_config = get_model_config()
         model_config.get_llm_route("summarizer")
         model_config.get_llm_route("relevance")
-        
+
         return True
-    
+
     except Exception as e:
         print(f"Configuration validation failed: {e}")
         return False
@@ -190,7 +220,7 @@ def validate_config() -> bool:
 
 if __name__ == "__main__":
     # Configuration validation
-    if validate_config():
+    if validate_config(get_settings()):
         print("✅ Configuration is valid")
     else:
         print("❌ Configuration validation failed")

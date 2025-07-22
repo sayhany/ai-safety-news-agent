@@ -1,322 +1,288 @@
-"""Main orchestrator for AI Safety Newsletter Agent."""
-
 import asyncio
 import sys
 from datetime import datetime
+from pathlib import Path
 from typing import List, Optional
 
 import click
 
-from .config import get_settings, validate_config
-from .ingest.sources import gather_articles, Article
-from .logging import get_logger, setup_logging, PerformanceLogger
+from .config import Settings, get_settings, validate_config, get_model_config
+from .ingest.sources import Article, gather_articles
+from .logging import PerformanceLogger, get_logger, setup_logging
 from .models.llm_client import create_llm_client
+from .processing.dedupe import deduplicate_articles as dedupe_articles
+from .processing.relevance import filter_relevance
+from .processing.scoring import score_articles
+from .ui import init_ui
+from .render import NewsletterConfig, render_newsletter as render_newsletter_md
+from .summarize import SummaryConfig, summarize_articles as llm_summarize_articles
 from .utils import parse_date_string
 
 logger = get_logger(__name__)
 
 
 async def run_pipeline(
-    start_date: str, 
-    mock: bool = False,
-    max_articles: Optional[int] = None
+    settings: Settings,
+    start_date: str,
+    ui = None,
+    output_filename: str = None
 ) -> str:
     """Run the complete newsletter generation pipeline.
-    
+
     Args:
-        start_date: Start date in YYYY-MM-DD format
-        mock: Use mock data and clients
-        max_articles: Maximum articles to process
-        
+        settings: The application settings.
+        start_date: Start date in YYYY-MM-DD format.
+        ui: Optional friendly UI instance.
+        output_filename: Output filename for summary display.
+
     Returns:
-        Generated newsletter markdown
+        Generated newsletter markdown.
     """
-    settings = get_settings()
+    # Generate default filename if not provided
+    if output_filename is None:
+        output_filename = f"newsletter_{start_date}.md"
     
-    logger.info(
-        "Starting newsletter generation pipeline",
-        start_date=start_date,
-        mock=mock,
-        max_articles=max_articles or settings.max_articles
-    )
+    model_config = get_model_config()
+    default_model = model_config.get_llm_route("relevance").primary
+    model_used = settings.llm_model_override or default_model
+
+    # Track metrics for final summary
+    total_sources = len(model_config.get_search_sources()) + len(model_config.get_approved_sources())
     
+    if ui:
+        ui.verbose_log(f"Starting pipeline with start_date={start_date}, mock={settings.mock}, max_articles={settings.max_articles}")
+        if settings.llm_model_override:
+            ui.show_model_info(model_used)
+
     try:
         with PerformanceLogger("full_pipeline", logger):
-            # Stage 1: Ingestion
-            logger.info("Stage 1: Article ingestion")
-            with PerformanceLogger("ingestion", logger):
+            # Stage 1: Article Ingestion
+            if ui:
+                with ui.stage("Gathering articles from {}".format(start_date.replace("-", " ")), "📰") as (progress, task):
+                    articles = await gather_articles(
+                        start_date=start_date,
+                        mock=settings.mock,
+                        limit_per_source=10,
+                    )
+                    
+                    if progress:
+                        ui.complete_progress(progress, task, f"Found {len(articles)} articles total")
+            else:
                 articles = await gather_articles(
                     start_date=start_date,
-                    mock=mock,
-                    limit_per_source=10
+                    mock=settings.mock,
+                    limit_per_source=10,
                 )
-            
-            logger.info(f"Ingested {len(articles)} articles")
-            
+
+            if ui:
+                ui.verbose_log(f"Ingested {len(articles)} articles")
+
             if not articles:
-                logger.warning("No articles found")
+                if ui:
+                    ui.warning("No articles found for the specified date range")
                 return "# AI Safety Newsletter\n\nNo articles found for the specified date range."
-            
-            # Stage 2: Relevance filtering (placeholder)
-            logger.info("Stage 2: Relevance filtering")
-            with PerformanceLogger("relevance_filtering", logger):
-                relevant_articles = await filter_relevant_articles(articles, mock=mock)
-            
-            logger.info(f"Filtered to {len(relevant_articles)} relevant articles")
-            
-            # Stage 3: Deduplication (placeholder)
-            logger.info("Stage 3: Deduplication")
-            with PerformanceLogger("deduplication", logger):
-                deduped_articles = deduplicate_articles(relevant_articles)
-            
-            logger.info(f"Deduplicated to {len(deduped_articles)} unique articles")
-            
-            # Stage 4: Scoring and ranking (placeholder)
-            logger.info("Stage 4: Scoring and ranking")
-            with PerformanceLogger("scoring", logger):
-                ranked_articles = rank_articles(deduped_articles)
-            
+
+            # Create LLM client once
+            llm_client = create_llm_client("summarizer", mock=settings.mock)
+            original_count = len(articles)
+
+            # Stage 2: Relevance filtering
+            if ui:
+                with ui.stage("Filtering for AI safety relevance", "🔍") as (progress, task):
+                    if not settings.mock:
+                        ui.show_model_info(model_used)
+                    articles = await filter_relevance(articles, settings, llm_client)
+                    
+                    if progress:
+                        ui.complete_progress(progress, task, f"{len(articles)} articles passed relevance filter")
+            else:
+                articles = await filter_relevance(articles, settings, llm_client)
+
+            filtered_count = len(articles)
+
+            # Stage 3: Deduplication  
+            if ui:
+                with ui.stage("Removing duplicates", "🔄") as (progress, task):
+                    articles, duplicate_groups = await dedupe_articles(
+                        articles, settings, llm_client
+                    )
+                    
+                    duplicates_removed = sum(len(group.duplicates) for group in duplicate_groups)
+                    if progress:
+                        ui.complete_progress(progress, task, f"{len(articles)} unique articles remain ({duplicates_removed} duplicates removed)")
+            else:
+                articles, duplicate_groups = await dedupe_articles(
+                    articles, settings, llm_client
+                )
+
+            # Stage 4: Scoring and Ranking
+            if ui:
+                with ui.stage("Scoring articles by importance", "⭐") as (progress, task):
+                    articles = score_articles(articles, settings)
+                    
+                    if progress:
+                        ui.complete_progress(progress, task, f"All {len(articles)} articles scored")
+            else:
+                articles = score_articles(articles, settings)
+
             # Limit to max articles
-            max_count = max_articles or settings.max_articles
-            top_articles = ranked_articles[:max_count]
-            
-            logger.info(f"Selected top {len(top_articles)} articles")
-            
-            # Stage 5: Summarization (placeholder)
-            logger.info("Stage 5: Summarization")
-            with PerformanceLogger("summarization", logger):
-                enriched_articles = await summarize_articles(top_articles, mock=mock)
-            
-            # Stage 6: Newsletter rendering
-            logger.info("Stage 6: Newsletter rendering")
-            with PerformanceLogger("rendering", logger):
-                newsletter = render_newsletter(enriched_articles, start_date)
-            
-            logger.info("Newsletter generation completed successfully")
+            top_articles = articles[: settings.max_articles]
+            final_count = len(top_articles)
+
+            if ui:
+                ui.verbose_log(f"Selected top {final_count} articles")
+
+            # Stage 5: Newsletter Generation
+            if ui:
+                with ui.stage("Generating newsletter", "📝") as (progress, task):
+                    # Summarization
+                    summary_config = SummaryConfig()
+                    top_articles = await llm_summarize_articles(
+                        top_articles, settings, llm_client, summary_config
+                    )
+                    
+                    # Rendering
+                    newsletter_config = NewsletterConfig(
+                        max_articles=settings.max_articles,
+                        include_summaries=True,
+                        include_key_points=True,
+                        include_implications=True,
+                    )
+                    newsletter = render_newsletter_md(
+                        top_articles, settings, newsletter_config
+                    )
+                    
+                    if progress:
+                        ui.complete_progress(progress, task, "Newsletter crafted and formatted")
+                        
+            else:
+                # Non-UI path
+                summary_config = SummaryConfig()
+                top_articles = await llm_summarize_articles(
+                    top_articles, settings, llm_client, summary_config
+                )
+                
+                newsletter_config = NewsletterConfig(
+                    max_articles=settings.max_articles,
+                    include_summaries=True,
+                    include_key_points=True,
+                    include_implications=True,
+                )
+                newsletter = render_newsletter_md(
+                    top_articles, settings, newsletter_config
+                )
+
+            # Show final summary
+            if ui:
+                ui.show_final_summary(
+                    total_sources=total_sources,
+                    total_articles=original_count,
+                    filtered_articles=filtered_count,
+                    final_articles=final_count,
+                    output_file=output_filename,
+                    model_used=model_used
+                )
+
             return newsletter
-    
+
     except Exception as e:
         logger.error("Pipeline failed", error=str(e), exc_info=True)
         raise
 
 
-async def filter_relevant_articles(articles: List[Article], mock: bool = False) -> List[Article]:
-    """Filter articles for AI safety relevance.
-    
-    Args:
-        articles: Input articles
-        mock: Use mock filtering
-        
-    Returns:
-        Filtered articles
-    """
-    if mock:
-        # Mock filtering: keep articles with AI-related keywords
-        ai_keywords = ['ai', 'artificial intelligence', 'machine learning', 'safety', 'ethics', 'governance']
-        relevant = []
-        
-        for article in articles:
-            text = f"{article['title']} {article['content']}".lower()
-            if any(keyword in text for keyword in ai_keywords):
-                relevant.append(article)
-        
-        return relevant
-    
-    # TODO: Implement real LLM-based relevance filtering
-    return articles
-
-
-def deduplicate_articles(articles: List[Article]) -> List[Article]:
-    """Remove duplicate articles.
-    
-    Args:
-        articles: Input articles
-        
-    Returns:
-        Deduplicated articles
-    """
-    # Simple deduplication by URL and title
-    seen_urls = set()
-    seen_titles = set()
-    unique_articles = []
-    
-    for article in articles:
-        url = article['url']
-        title = article['title'].lower().strip()
-        
-        if url not in seen_urls and title not in seen_titles:
-            seen_urls.add(url)
-            seen_titles.add(title)
-            unique_articles.append(article)
-    
-    return unique_articles
-
-
-def rank_articles(articles: List[Article]) -> List[Article]:
-    """Rank articles by importance.
-    
-    Args:
-        articles: Input articles
-        
-    Returns:
-        Ranked articles (highest score first)
-    """
-    settings = get_settings()
-    
-    # Simple scoring based on source and recency
-    for article in articles:
-        score = 0.0
-        
-        # Source priority
-        domain = article.get('source', '')
-        if 'gov' in domain:
-            score += settings.w_gov
-        else:
-            score += settings.w_source_priority * 0.5
-        
-        # Recency (newer articles score higher)
-        published_date = article.get('published_date')
-        if isinstance(published_date, datetime):
-            days_old = (datetime.now() - published_date).days
-            recency_score = max(0, 1 - days_old / 30)  # Decay over 30 days
-            score += settings.w_recency * recency_score
-        
-        article['_score'] = score
-    
-    # Sort by score (descending)
-    return sorted(articles, key=lambda x: x.get('_score', 0), reverse=True)
-
-
-async def summarize_articles(articles: List[Article], mock: bool = False) -> List[Article]:
-    """Add summaries to articles.
-    
-    Args:
-        articles: Input articles
-        mock: Use mock summarization
-        
-    Returns:
-        Articles with summaries
-    """
-    if mock:
-        # Add mock summaries
-        for article in articles:
-            article['summary'] = f"**{article['title'][:50]}...**\n\n• Key development in AI safety\n• Implications for governance\n• Industry impact expected"
-            article['category'] = 'Technology'
-            article['importance'] = 3
-        
-        return articles
-    
-    # TODO: Implement real LLM-based summarization
-    return articles
-
-
-def render_newsletter(articles: List[Article], start_date: str) -> str:
-    """Render newsletter markdown.
-    
-    Args:
-        articles: Articles to include
-        start_date: Newsletter start date
-        
-    Returns:
-        Newsletter markdown
-    """
-    from datetime import datetime
-    
-    # Parse start date
-    start_dt = parse_date_string(start_date)
-    date_str = start_dt.strftime("%B %d, %Y") if start_dt else start_date
-    
-    # Build newsletter
-    lines = [
-        "# AI Safety Newsletter",
-        f"*{date_str}*",
-        "",
-        "---",
-        "",
-        "## Executive Summary",
-        "",
-        f"This newsletter covers {len(articles)} key developments in AI safety.",
-        "",
-        "**Highlights:**"
-    ]
-    
-    # Add highlights
-    for i, article in enumerate(articles[:3], 1):
-        lines.append(f"{i}. {article['title']}")
-    
-    lines.extend([
-        "",
-        "---",
-        "",
-        "## Top Stories",
-        ""
-    ])
-    
-    # Add articles
-    for i, article in enumerate(articles, 1):
-        lines.extend([
-            f"### {i}. {article['title']}",
-            "",
-            article.get('summary', article.get('content', '')[:200] + '...'),
-            "",
-            f"**Source:** [{article['source']}]({article['url']})",
-            "",
-            "---" if i < len(articles) else "",
-            ""
-        ])
-    
-    lines.extend([
-        "---",
-        "",
-        f"*Generated on {datetime.now().strftime('%Y-%m-%d at %H:%M UTC')} by AI Safety Newsletter Agent*"
-    ])
-    
-    return "\n".join(lines)
-
-
 @click.command()
-@click.argument('start_date', type=click.DateTime(formats=['%Y-%m-%d']))
-@click.option('--mock', is_flag=True, help='Use mock data and LLM clients')
-@click.option('--max-articles', type=int, help='Maximum articles to include')
-@click.option('--output', '-o', type=click.File('w'), default='-', help='Output file (default: stdout)')
-@click.option('--log-level', default='INFO', help='Log level')
-@click.option('--validate-config', is_flag=True, help='Validate configuration and exit')
-def cli(start_date, mock, max_articles, output, log_level, validate_config_flag):
+@click.argument("start_date", type=click.DateTime(formats=["%Y-%m-%d"]))
+@click.option("--mock", is_flag=True, help="Use mock data and LLM clients")
+@click.option("--max-articles", type=int, help="Maximum articles to include")
+@click.option(
+    "--output",
+    "-o",
+    type=click.File("w"),
+    default="-",
+    help="Output file (default: stdout)",
+)
+@click.option("--log-level", default="ERROR", help="Log level")
+@click.option("--verbose", is_flag=True, help="Show detailed progress information")
+@click.option(
+    "--validate-config",
+    "validate_config_flag",
+    is_flag=True,
+    help="Validate configuration and exit",
+)
+@click.option("--api-key", help="Google AI API key to use.")
+@click.option("--model", help="LLM model to use (e.g., 'gemini-2.5-flash').")
+def cli(
+    start_date,
+    mock,
+    max_articles,
+    output,
+    log_level,
+    verbose,
+    validate_config_flag,
+    api_key,
+    model,
+):
     """AI Safety Newsletter Agent - Generate AI safety newsletters from news sources."""
+    # Set log level to suppress noise unless verbose mode is enabled
+    actual_log_level = "INFO" if verbose else log_level
+    setup_logging(log_level=actual_log_level, json_logging=False)
     
-    # Setup logging
-    setup_logging(log_level=log_level, json_logging=False)
+    # Suppress ALL logs unless in verbose mode
+    if not verbose:
+        import logging
+        # Set root logger to ERROR to suppress all module logs
+        logging.getLogger().setLevel(logging.ERROR)
+        # Suppress HTTP request logs
+        logging.getLogger("httpx").setLevel(logging.ERROR)
+        logging.getLogger("httpcore").setLevel(logging.ERROR)
+        logging.getLogger("urllib3").setLevel(logging.ERROR)
+        logging.getLogger("aiohttp").setLevel(logging.ERROR)
+        # Suppress application module logs
+        logging.getLogger("aisafety_news").setLevel(logging.ERROR)
     
-    if validate_config_flag:
-        if validate_config():
-            click.echo("✅ Configuration is valid")
-            sys.exit(0)
-        else:
-            click.echo("❌ Configuration validation failed")
-            sys.exit(1)
-    
-    # Validate configuration
-    if not validate_config():
-        click.echo("❌ Configuration validation failed. Use --validate-config for details.")
-        sys.exit(1)
-    
-    # Convert datetime to string
-    start_date_str = start_date.strftime('%Y-%m-%d')
-    
+    # Initialize friendly UI
+    ui = init_ui(verbose=verbose)
+    ui.show_banner()
+
     try:
-        # Run pipeline
+        settings = get_settings()
+        if mock:
+            settings.mock = True
+        if api_key:
+            settings.google_ai_api_key = api_key
+        if model:
+            settings.llm_model_override = model
+        if max_articles:
+            settings.max_articles = max_articles
+
+        if validate_config_flag:
+            if validate_config(settings):
+                ui.success("Configuration is valid")
+                sys.exit(0)
+            else:
+                ui.error("Configuration validation failed")
+                sys.exit(1)
+
+        if not validate_config(settings):
+            ui.error("Configuration validation failed. Use --validate-config for details.")
+            sys.exit(1)
+
+        start_date_str = start_date.strftime("%Y-%m-%d")
+        output_filename = output.name if output.name != "<stdout>" else f"newsletter_{start_date_str}.md"
+
         newsletter = asyncio.run(run_pipeline(
-            start_date=start_date_str,
-            mock=mock,
-            max_articles=max_articles
+            settings=settings, 
+            start_date=start_date_str, 
+            ui=ui,
+            output_filename=output_filename
         ))
-        
-        # Output newsletter
+
         output.write(newsletter)
-        
-        if output != sys.stdout:
-            click.echo(f"Newsletter written to {output.name}")
-    
+
+        if output.name != "<stdout>":
+            # Don't show this message as UI already shows final summary
+            pass
+
     except Exception as e:
         logger.error("CLI execution failed", error=str(e))
         click.echo(f"❌ Error: {e}", err=True)

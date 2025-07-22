@@ -2,24 +2,21 @@
 
 # Summarization models (for article summaries and newsletter generation)
 summarizer:
-  primary: "anthropic/claude-3-haiku"
+  primary: "gpt-4.1"
   fallback:
-    - "openai/gpt-4o-mini"
-    - "meta-llama/llama-3.1-8b-instruct"
-    - "google/gemini-flash-1.5"
+    - "gpt-4.1-mini"
 
 # Relevance filtering models (for AI safety content classification)
 relevance:
-  primary: "openai/gpt-4o-mini"
+  primary: "gpt-4.1"
   fallback:
-    - "anthropic/claude-3-haiku"
-    - "meta-llama/llama-3.1-8b-instruct"
+    - "gpt-4.1-mini"
 
 # Importance scoring models (for article ranking)
 importance:
-  primary: "anthropic/claude-3-haiku"
+  primary: "gpt-4.1"
   fallback:
-    - "openai/gpt-4o-mini"
+    - "gpt-4.1-mini"
 
 # Model-specific settings
 model_settings:
@@ -70,23 +67,119 @@ source_priorities:
   # Default priority for unlisted sources
   default: 0.5
 
-# RSS feed sources for AI safety news
-approved_sources:
-  - url: "https://feeds.reuters.com/reuters/technologyNews"
-    domain: "reuters.com"
-    category: "technology"
-    
-  - url: "https://rss.cnn.com/rss/edition.rss"
-    domain: "cnn.com" 
-    category: "general"
-    
-  - url: "https://feeds.bbci.co.uk/news/technology/rss.xml"
-    domain: "bbc.com"
-    category: "technology"
-    
-  - url: "https://www.wired.com/feed/category/business/ai/rss"
-    domain: "wired.com"
-    category: "ai"
+# Search-based sources for AI safety news
+search_sources:
+  - name: "Reuters AI Safety News"
+    api: "exa"
+    query: '(AI safety OR AI alignment OR AI governance OR AI regulation OR responsible AI OR AI ethics OR "machine learning safety") site:reuters.com'
+    date_range: 7
+    priority: 0.9
+
+  - name: "Associated Press AI Governance"
+    api: "exa"
+    query: '(AI governance OR AI regulation OR AI ethics) site:apnews.com'
+    date_range: 7
+    priority: 0.85
+
+  - name: "The Guardian AI Ethics and Regulation"
+    api: "exa"
+    query: '("AI ethics" OR "AI regulation" OR "responsible AI") site:theguardian.com'
+    date_range: 7
+    priority: 0.88
+
+  - name: "BBC AI Safety Updates"
+    api: "exa"
+    query: '(AI safety OR AI alignment OR "machine learning safety") site:bbc.com'
+    date_range: 7
+    priority: 0.87
+
+  - name: "New York Times AI News"
+    api: "exa"
+    query: '(AI safety OR AI governance OR AI ethics) site:nytimes.com'
+    date_range: 7
+    priority: 0.92
+
+  - name: "TechCrunch AI Tech Developments"
+    api: "exa"
+    query: '(AI alignment OR "responsible AI" OR AI regulation) site:techcrunch.com'
+    date_range: 14
+    priority: 0.82
+
+  - name: "Ars Technica AI Safety Insights"
+    api: "exa"
+    query: '("machine learning safety" OR AI ethics OR AI governance) site:arstechnica.com'
+    date_range: 14
+    priority: 0.83
+
+  - name: "The Verge AI Regulation Coverage"
+    api: "exa"
+    query: '(AI regulation OR AI safety OR "AI alignment") site:theverge.com'
+    date_range: 14
+    priority: 0.81
+
+  - name: "Wired AI Ethics and Governance"
+    api: "exa"
+    query: '(AI ethics OR AI governance OR "responsible AI") site:wired.com'
+    date_range: 14
+    priority: 0.84
+
+  # Academic and research sources (commented out)
+  # - name: "Academic AI Safety Research"
+  #   api: "exa"
+  #   query: '("AI alignment" OR "AI safety research" OR "machine learning safety") (site:arxiv.org OR site:nature.com OR site:sciencemag.org)'
+  #   date_range: 30
+  #   priority: 0.95
+
+  # - name: "IEEE and ACM AI Publications"
+  #   api: "exa"
+  #   query: '(AI safety OR AI ethics OR AI governance) (site:ieee.org OR site:dl.acm.org)'
+  #   date_range: 30
+  #   priority: 0.94
+
+  # AI company sources (commented out)
+  # - name: "Anthropic and OpenAI Safety Announcements"
+  #   api: "exa"
+  #   query: '("AI safety" OR "AI alignment" OR "responsible AI") (site:anthropic.com OR site:openai.com)'
+  #   date_range: 14
+  #   priority: 0.96
+
+  # - name: "DeepMind AI Research"
+  #   api: "exa"
+  #   query: '(AI governance OR AI ethics OR "machine learning safety") site:deepmind.com'
+  #   date_range: 14
+  #   priority: 0.93
+
+  # AI safety community sources (commented out)
+  # - name: "Alignment Forum Discussions"
+  #   api: "exa"
+  #   query: '("AI alignment" OR "AI safety") site:alignmentforum.org'
+  #   date_range: 30
+  #   priority: 0.91
+
+  # Government sources (commented out)
+  # - name: "NIST AI Standards"
+  #   api: "exa"
+  #   query: '(AI regulation OR "responsible AI" OR AI governance) site:nist.gov'
+  #   date_range: 30
+  #   priority: 0.97
+
+  # - name: "UK AI Safety Institute Reports"
+  #   api: "exa"
+  #   query: '("AI safety" OR AI ethics OR AI alignment) site:aisi.gov.uk'
+  #   date_range: 30
+  #   priority: 0.98
+
+  # - name: "EU AI Regulatory Updates"
+  #   api: "exa"
+  #   query: '(AI regulation OR AI governance) site:ec.europa.eu'
+  #   date_range: 30
+  #   priority: 0.89
+
+  # - name: "White House AI Policy"
+  #   api: "exa"
+  #   query: '("responsible AI" OR AI ethics OR AI safety) site:whitehouse.gov'
+  #   date_range: 14
+  #   priority: 0.86
 
 # AI safety keywords for relevance filtering
 ai_safety_keywords:

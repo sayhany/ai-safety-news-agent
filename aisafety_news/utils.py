@@ -87,6 +87,19 @@ def parse_date_string(date_str: str) -> Optional[datetime]:
     Returns:
         Parsed datetime or None if parsing fails
     """
+    if not date_str:
+        return None
+    
+    date_str = date_str.strip()
+    
+    # Try RFC 2822 format first (common in RSS feeds)
+    # Example: "Thu, 17 Jul 2025 23:17:14 GMT"
+    try:
+        from email.utils import parsedate_to_datetime
+        return parsedate_to_datetime(date_str)
+    except (ValueError, TypeError):
+        pass
+    
     # Common date formats
     formats = [
         "%Y-%m-%d",
@@ -100,11 +113,18 @@ def parse_date_string(date_str: str) -> Optional[datetime]:
         "%b %d, %Y",
         "%d %B %Y",
         "%d %b %Y",
+        # Additional RFC-like formats
+        "%a, %d %b %Y %H:%M:%S %Z",
+        "%a, %d %b %Y %H:%M:%S",
     ]
     
     for fmt in formats:
         try:
-            return datetime.strptime(date_str.strip(), fmt)
+            parsed = datetime.strptime(date_str, fmt)
+            # Ensure timezone info is set
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=timezone.utc)
+            return parsed
         except ValueError:
             continue
     
@@ -316,6 +336,7 @@ class AsyncSemaphore:
         self.global_semaphore = asyncio.Semaphore(global_limit)
         self.domain_semaphores = {}
         self.domain_limits = domain_limits or {}
+        self._current_domain = None
     
     def get_domain_semaphore(self, domain: str) -> asyncio.Semaphore:
         """Get semaphore for specific domain."""
@@ -333,15 +354,30 @@ class AsyncSemaphore:
         if domain:
             domain_sem = self.get_domain_semaphore(domain)
             await domain_sem.acquire()
+            self._current_domain = domain
     
     def release(self, domain: Optional[str] = None):
         """Release semaphore for domain."""
+        # Use stored domain if not provided
+        if domain is None:
+            domain = self._current_domain
+            
         # Release domain-specific semaphore first
         if domain and domain in self.domain_semaphores:
             self.domain_semaphores[domain].release()
         
         # Release global semaphore
         self.global_semaphore.release()
+        self._current_domain = None
+    
+    async def __aenter__(self):
+        """Async context manager entry."""
+        await self.acquire()
+        return self
+    
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        """Async context manager exit."""
+        self.release()
 
 
 def safe_filename(filename: str) -> str:

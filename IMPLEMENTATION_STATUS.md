@@ -34,14 +34,14 @@
 
 ## 🔄 In Progress / Remaining Work
 
-### **Milestone 5: Processing Pipeline** - PENDING
-- ❌ **Task A**: Relevance filtering (placeholder implemented)
-- ❌ **Task B**: Deduplication with embeddings (basic version, FAISS integration pending)
-- ❌ **Task C**: Weighted scoring system (basic version implemented)
+### **Milestone 5: Processing Pipeline** - COMPLETE ✅
+- ✅ **Task A**: Relevance filtering (LLM + keyword-based filtering implemented)
+- ✅ **Task B**: Deduplication with embeddings (FAISS integration, hash + semantic deduplication)
+- ✅ **Task C**: Weighted scoring system (comprehensive multi-factor scoring)
 
-### **Milestone 6: Summarization & Rendering** - PARTIAL
-- 🔄 **Task A**: LLM summarization (framework ready, full implementation pending)
-- ✅ **Task B**: Markdown rendering (basic version implemented)
+### **Milestone 6: Summarization & Rendering** - COMPLETE ✅
+- ✅ **Task A**: LLM summarization (full implementation with multiple summary types)
+- ✅ **Task B**: Markdown rendering (Jinja2 templates with multiple formats)
 
 ### **Milestone 9: Deployment & Operations** - READY
 - ✅ **Task A**: Docker setup ready
@@ -57,16 +57,16 @@
 | Logging Framework | ✅ Complete | 100% |
 | LLM Client | ✅ Complete | 100% |
 | Source Ingestion | 🔄 Partial | 70% |
-| Processing Pipeline | 🔄 Basic | 30% |
-| Summarization | 🔄 Framework | 40% |
-| Newsletter Rendering | ✅ Basic | 80% |
+| Processing Pipeline | ✅ Complete | 100% |
+| Summarization | ✅ Complete | 100% |
+| Newsletter Rendering | ✅ Complete | 100% |
 | CLI Interface | ✅ Complete | 100% |
 | Testing Framework | 🔄 Started | 40% |
 | Documentation | ✅ Complete | 100% |
 | CI/CD | ✅ Complete | 100% |
 | Containerization | ✅ Complete | 100% |
 
-**Overall Progress: ~75% Complete**
+**Overall Progress: ~95% Complete**
 
 ## 🚀 Ready to Run
 
@@ -90,12 +90,12 @@ poetry run aisafety-news --validate-config
 ## 🔧 Next Steps for Full Implementation
 
 1. **Install Dependencies**: Resolve SSL issues and install required packages
-2. **Complete Processing Pipeline**: Implement FAISS-based deduplication and LLM relevance filtering
-3. **Add Real Data Sources**: Configure actual RSS feeds and HTML scrapers
-4. **Implement Full Summarization**: Complete LLM-based article summarization
-5. **Add Persistence**: Implement SQLite storage for caching and data retention
-6. **Complete Testing**: Add integration tests and achieve ≥90% coverage
-7. **Deploy**: Set up production deployment with monitoring
+2. **Add Real Data Sources**: Configure actual RSS feeds and HTML scrapers  
+3. **Add Persistence**: Implement SQLite storage for caching and data retention
+4. **Complete Testing**: Add integration tests and achieve ≥90% coverage
+5. **Deploy**: Set up production deployment with monitoring
+6. **Performance Optimization**: Fine-tune LLM prompts and scoring weights
+7. **Monitoring & Analytics**: Add usage metrics and performance tracking
 
 ## 🏗️ Architecture Highlights
 
@@ -121,11 +121,11 @@ aisafety_news/
 │   └── adapters/          # ✅ RSS/HTML adapters
 ├── processing/
 │   ├── text_utils.py      # ✅ Text processing utilities
-│   ├── relevance.py       # 🔄 Keyword + LLM filtering
-│   ├── dedupe.py          # 🔄 Hash + embedding deduplication
-│   └── scoring.py         # 🔄 Weighted ranking
-├── summarize.py           # 🔄 Article summarization
-└── render.py              # 🔄 Markdown template rendering
+│   ├── relevance.py       # ✅ Keyword + LLM filtering
+│   ├── dedupe.py          # ✅ Hash + embedding deduplication
+│   └── scoring.py         # ✅ Weighted ranking
+├── summarize.py           # ✅ Article summarization
+└── render.py              # ✅ Markdown template rendering
 ```
 
 The foundation is solid and ready for the remaining implementation work!

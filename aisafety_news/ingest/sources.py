@@ -7,14 +7,15 @@ from typing import Any, Dict, List, Optional, Set
 from urllib.parse import urljoin, urlparse
 
 import aiohttp
-import feedparser
+import aiohttp
+from exa_py import Exa
 from selectolax.parser import HTMLParser
 
 from ..config import get_model_config, get_settings
 from ..logging import get_logger, log_processing_stage, PerformanceLogger
 from ..utils import (
-    extract_domain, normalize_url, is_valid_url, 
-    parse_date_string, clean_text, AsyncSemaphore
+    extract_domain, normalize_url, is_valid_url,
+    parse_date_string, clean_text, AsyncSemaphore, retry_async
 )
 
 logger = get_logger(__name__)
@@ -66,10 +67,10 @@ class SourceAdapter(ABC):
     
     def __init__(self, source_config: Dict[str, Any]):
         self.config = source_config
-        self.url = source_config['url']
-        self.domain = source_config['domain']
-        self.category = source_config.get('category', 'general')
-        self.priority = source_config.get('priority', 0.5)
+        self.url = getattr(source_config, 'url', None)
+        self.domain = getattr(source_config, 'domain', None)
+        self.category = getattr(source_config, 'category', 'general')
+        self.priority = getattr(source_config, 'priority', 0.5)
         
         self.settings = get_settings()
         self.session: Optional[aiohttp.ClientSession] = None
@@ -108,35 +109,54 @@ class SourceAdapter(ABC):
         """
         pass
     
-    async def _fetch_url(self, url: str) -> str:
-        """Fetch URL content with error handling.
+    async def _fetch_url(self, url: str, retry_count: int = 3) -> str:
+        """Fetch URL content with error handling and retry logic.
         
         Args:
             url: URL to fetch
+            retry_count: Number of retry attempts
             
         Returns:
             Response text
             
         Raises:
-            aiohttp.ClientError: If request fails
+            aiohttp.ClientError: If request fails after all retries
         """
         if not self.session:
             raise RuntimeError("Session not initialized. Use async context manager.")
         
         logger.debug("Fetching URL", url=url, domain=self.domain)
         
-        async with self.session.get(url) as response:
-            response.raise_for_status()
-            content = await response.text()
-            
-            logger.debug(
-                "URL fetched successfully",
-                url=url,
-                status=response.status,
-                content_length=len(content)
+        async def fetch_with_session():
+            async with self.session.get(url) as response:
+                response.raise_for_status()
+                content = await response.text()
+                
+                logger.debug(
+                    "URL fetched successfully",
+                    url=url,
+                    status=response.status,
+                    content_length=len(content)
+                )
+                
+                return content
+        
+        # Use retry logic from utils
+        try:
+            return await retry_async(
+                fetch_with_session,
+                max_retries=retry_count,
+                backoff_factor=2.0,
+                exceptions=(aiohttp.ClientError, aiohttp.ClientResponseError, asyncio.TimeoutError)
             )
-            
-            return content
+        except Exception as e:
+            logger.error(
+                "Failed to fetch URL after retries",
+                url=url,
+                domain=self.domain,
+                error=str(e)
+            )
+            raise
     
     def _parse_date(self, date_str: str) -> Optional[datetime]:
         """Parse date string to datetime."""
@@ -147,164 +167,97 @@ class SourceAdapter(ABC):
         return clean_text(content)
 
 
-class RSSAdapter(SourceAdapter):
-    """RSS feed adapter."""
-    
+class SearchAPIAdapter(SourceAdapter):
+    """Search API adapter."""
+
+    def __init__(self, source_config: Dict[str, Any]):
+        super().__init__(source_config)
+        self.api = getattr(source_config, 'api', 'exa')
+        self.query = getattr(source_config, 'query', '')
+
     async def fetch_articles(
-        self, 
-        start_date: datetime, 
+        self,
+        start_date: datetime,
         limit: Optional[int] = None
     ) -> List[Article]:
-        """Fetch articles from RSS feed."""
-        try:
-            # Fetch RSS content
-            rss_content = await self._fetch_url(self.url)
-            
-            # Parse RSS feed
-            feed = feedparser.parse(rss_content)
-            
-            if not feed.entries:
-                logger.warning("No entries found in RSS feed", url=self.url)
-                return []
-            
-            articles = []
-            for entry in feed.entries:
-                try:
-                    article = await self._parse_rss_entry(entry, start_date)
-                    if article:
-                        articles.append(article)
-                        
-                        if limit and len(articles) >= limit:
-                            break
-                            
-                except Exception as e:
-                    logger.warning(
-                        "Failed to parse RSS entry",
-                        url=self.url,
-                        entry_title=getattr(entry, 'title', 'Unknown'),
-                        error=str(e)
-                    )
-                    continue
-            
-            logger.info(
-                "RSS articles fetched",
-                source=self.domain,
-                total_entries=len(feed.entries),
-                parsed_articles=len(articles)
+        """Fetch articles from a search API."""
+        if self.api == 'exa':
+            adapter = ExaSearchAPIAdapter(self.config)
+        elif self.api == 'bing':
+            # Placeholder for Bing adapter
+            raise NotImplementedError("Bing Search API adapter not implemented.")
+        else:
+            raise ValueError(f"Unknown search API: {self.api}")
+
+        async with adapter as a:
+            return await a.fetch_articles(start_date, limit)
+
+
+class ExaSearchAPIAdapter(SearchAPIAdapter):
+    """Exa Search API adapter."""
+
+    async def fetch_articles(
+        self,
+        start_date: datetime,
+        limit: Optional[int] = None
+    ) -> List[Article]:
+        if not self.settings.exa_api_key:
+            raise ValueError("Exa Search API key is not set.")
+
+        exa = Exa(api_key=self.settings.exa_api_key)
+        
+        # Define approved domains for AI safety news
+        approved_domains = [
+            "reuters.com",
+            "apnews.com", 
+            "bbc.com",
+            "theguardian.com",
+            "nytimes.com",
+            "techcrunch.com",
+            "arstechnica.com",
+            "theverge.com",
+            "wired.com",
+            "wsj.com",
+            "npr.org",
+            # High-quality AI safety sources
+            "anthropic.com",
+            "openai.com", 
+            "deepmind.com",
+            "mit.edu",
+            "stanford.edu",
+            "berkeley.edu"
+        ]
+        
+        # Run synchronous Exa API call in thread executor
+        loop = asyncio.get_event_loop()
+        results = await loop.run_in_executor(
+            None,
+            lambda: exa.search_and_contents(
+                self.query,
+                num_results=limit or 10,
+                start_published_date=start_date.strftime('%Y-%m-%dT%H:%M:%SZ'),
+                use_autoprompt=True,
+                include_domains=approved_domains
             )
-            
-            return articles
-            
-        except Exception as e:
-            logger.error(
-                "Failed to fetch RSS feed",
-                url=self.url,
-                error=str(e)
-            )
-            return []
-    
-    async def _parse_rss_entry(
-        self, 
-        entry: Any, 
-        start_date: datetime
-    ) -> Optional[Article]:
-        """Parse individual RSS entry."""
-        # Extract basic fields
-        title = getattr(entry, 'title', '').strip()
-        link = getattr(entry, 'link', '').strip()
-        description = getattr(entry, 'description', '').strip()
-        
-        if not title or not link:
-            return None
-        
-        # Parse publication date
-        published_date = None
-        for date_field in ['published', 'updated', 'pubDate']:
-            if hasattr(entry, date_field):
-                date_str = getattr(entry, date_field)
-                published_date = self._parse_date(date_str)
-                if published_date:
-                    break
-        
-        if not published_date:
-            published_date = datetime.now(timezone.utc)
-        
-        # Filter by date
-        if published_date < start_date:
-            return None
-        
-        # Get full article content
-        content = await self._fetch_article_content(link, description)
-        
-        # Extract author
-        author = getattr(entry, 'author', '')
-        
-        # Extract tags
-        tags = []
-        if hasattr(entry, 'tags'):
-            tags = [tag.term for tag in entry.tags if hasattr(tag, 'term')]
-        
-        return Article(
-            title=self._clean_content(title),
-            url=normalize_url(link),
-            content=content,
-            description=self._clean_content(description),
-            published_date=published_date,
-            source=self.domain,
-            author=author,
-            tags=tags,
-            category=self.category
         )
-    
-    async def _fetch_article_content(self, url: str, fallback_content: str) -> str:
-        """Fetch full article content from URL."""
-        try:
-            # Try to fetch full article
-            html_content = await self._fetch_url(url)
-            
-            # Parse HTML and extract main content
-            parser = HTMLParser(html_content)
-            
-            # Try common content selectors
-            content_selectors = [
-                'article',
-                '.article-content',
-                '.post-content',
-                '.entry-content',
-                '.content',
-                'main',
-                '.main-content'
-            ]
-            
-            content = ""
-            for selector in content_selectors:
-                elements = parser.css(selector)
-                if elements:
-                    content = elements[0].text(strip=True)
-                    break
-            
-            # Fallback to body if no specific content found
-            if not content:
-                body = parser.css_first('body')
-                if body:
-                    content = body.text(strip=True)
-            
-            # Clean and validate content
-            content = self._clean_content(content)
-            
-            # Use fallback if content is too short
-            if len(content) < 100:
-                content = fallback_content
-            
-            return content
-            
-        except Exception as e:
-            logger.debug(
-                "Failed to fetch article content, using fallback",
-                url=url,
-                error=str(e)
-            )
-            return self._clean_content(fallback_content)
+
+        return self._parse_search_results(results)
+
+    def _parse_search_results(self, data: Any) -> List[Article]:
+        articles = []
+        for item in data.results:
+            try:
+                article = Article(
+                    title=item.title or "",
+                    url=item.url or "",
+                    content=item.text or "",
+                    published_date=item.published_date or datetime.now(timezone.utc).isoformat(),
+                    source=item.url or "",
+                )
+                articles.append(article)
+            except ValueError as e:
+                logger.warning(f"Skipping search result due to missing field: {e}")
+        return articles
 
 
 class HTMLAdapter(SourceAdapter):
@@ -312,10 +265,10 @@ class HTMLAdapter(SourceAdapter):
     
     def __init__(self, source_config: Dict[str, Any]):
         super().__init__(source_config)
-        self.article_selector = source_config.get('article_selector', 'article')
-        self.title_selector = source_config.get('title_selector', 'h1, h2, .title')
-        self.content_selector = source_config.get('content_selector', '.content, .article-body')
-        self.date_selector = source_config.get('date_selector', 'time, .date')
+        self.article_selector = getattr(source_config, 'article_selector', 'article')
+        self.title_selector = getattr(source_config, 'title_selector', 'h1, h2, .title')
+        self.content_selector = getattr(source_config, 'content_selector', '.content, .article-body')
+        self.date_selector = getattr(source_config, 'date_selector', 'time, .date')
     
     async def fetch_articles(
         self, 
@@ -324,7 +277,7 @@ class HTMLAdapter(SourceAdapter):
     ) -> List[Article]:
         """Fetch articles from HTML page."""
         try:
-            html_content = await self._fetch_url(self.url)
+            html_content = await self._fetch_url(str(self.url))
             parser = HTMLParser(html_content)
             
             # Find article elements
@@ -415,6 +368,112 @@ class HTMLAdapter(SourceAdapter):
         )
 
 
+class SourceHealthMonitor:
+    """Monitor source health and availability."""
+
+    def __init__(self):
+        self.source_status: Dict[str, Dict[str, Any]] = {}
+        self.failure_threshold = 3
+        self.check_interval = 3600  # 1 hour
+
+    def record_success(self, name: str, response_time: float, entry_count: int):
+        """Record successful source fetch."""
+        self.source_status[name] = {
+            'status': 'healthy',
+            'last_success': datetime.now(timezone.utc),
+            'response_time': response_time,
+            'entry_count': entry_count,
+            'consecutive_failures': 0,
+            'last_error': None,
+        }
+        logger.debug(
+            "Source health: success recorded",
+            name=name,
+            response_time=response_time,
+            entries=entry_count,
+        )
+
+    def record_failure(self, name: str, error: str):
+        """Record failed source fetch."""
+        if name not in self.source_status:
+            self.source_status[name] = {
+                'status': 'unknown',
+                'consecutive_failures': 0,
+            }
+
+        self.source_status[name]['consecutive_failures'] += 1
+        self.source_status[name]['last_error'] = error
+        self.source_status[name]['last_failure'] = datetime.now(timezone.utc)
+
+        if self.source_status[name]['consecutive_failures'] >= self.failure_threshold:
+            self.source_status[name]['status'] = 'unhealthy'
+            logger.error(
+                "Source marked as unhealthy",
+                name=name,
+                failures=self.source_status[name]['consecutive_failures'],
+                error=error,
+            )
+        else:
+            self.source_status[name]['status'] = 'degraded'
+            logger.warning(
+                "Source experiencing issues",
+                name=name,
+                failures=self.source_status[name]['consecutive_failures'],
+                error=error,
+            )
+
+    def get_health_report(self) -> Dict[str, Any]:
+        """Get health report for all monitored sources."""
+        total = len(self.source_status)
+        healthy = sum(1 for s in self.source_status.values() if s['status'] == 'healthy')
+        degraded = sum(1 for s in self.source_status.values() if s['status'] == 'degraded')
+        unhealthy = sum(1 for s in self.source_status.values() if s['status'] == 'unhealthy')
+
+        report = {
+            'timestamp': datetime.now(timezone.utc).isoformat(),
+            'summary': {
+                'total': total,
+                'healthy': healthy,
+                'degraded': degraded,
+                'unhealthy': unhealthy,
+            },
+            'sources': self.source_status,
+        }
+        logger.info(
+            "Source health report",
+            total=total,
+            healthy=healthy,
+            degraded=degraded,
+            unhealthy=unhealthy,
+        )
+        return report
+
+    def should_skip_source(self, name: str) -> bool:
+        """Check if source should be skipped due to poor health."""
+        if name not in self.source_status:
+            return False
+        status = self.source_status[name]
+        if status['status'] == 'unhealthy':
+            last_failure = status.get('last_failure')
+            if last_failure:
+                time_since_failure = datetime.now(timezone.utc) - last_failure
+                if time_since_failure.total_seconds() < self.check_interval:
+                    logger.info(
+                        "Skipping unhealthy source",
+                        name=name,
+                        time_since_failure=time_since_failure.total_seconds(),
+                    )
+                    return True
+        return False
+
+# Global health monitor instance
+_health_monitor = SourceHealthMonitor()
+
+def get_source_health_monitor() -> SourceHealthMonitor:
+    """Get global source health monitor instance."""
+    return _health_monitor
+
+
 class SourceRegistry:
     """Registry for managing news sources and their adapters."""
     
@@ -423,25 +482,38 @@ class SourceRegistry:
         self.model_config = get_model_config()
         self.sources: List[Dict[str, Any]] = []
         self.adapters: Dict[str, SourceAdapter] = {}
+        self.health_monitor = get_source_health_monitor()
         self._load_sources()
     
     def _load_sources(self):
         """Load sources from configuration."""
         try:
-            self.sources = self.model_config.get_approved_sources()
-            logger.info("Loaded sources", count=len(self.sources))
+            rss_sources = self.model_config.get_approved_sources()
+            search_sources = self.model_config.get_search_sources()
+            self.sources = rss_sources + search_sources
+            logger.info(
+                "Loaded sources",
+                rss_count=len(rss_sources),
+                search_count=len(search_sources),
+                total=len(self.sources),
+            )
         except Exception as e:
             logger.error("Failed to load sources", error=str(e))
             self.sources = []
     
     def create_adapter(self, source_config: Dict[str, Any]) -> SourceAdapter:
         """Create appropriate adapter for source."""
-        adapter_type = source_config.get('type', 'rss')
-        
-        if adapter_type == 'rss':
-            return RSSAdapter(source_config)
-        elif adapter_type == 'html':
+        if hasattr(source_config, 'query'):
+            adapter_type = 'search'
+        elif hasattr(source_config, 'url'):
+            adapter_type = getattr(source_config, 'type', 'html')
+        else:
+            raise ValueError("Invalid source configuration")
+
+        if adapter_type == 'html':
             return HTMLAdapter(source_config)
+        elif adapter_type == 'search':
+            return SearchAPIAdapter(source_config)
         else:
             raise ValueError(f"Unknown adapter type: {adapter_type}")
     
@@ -458,27 +530,29 @@ class SourceRegistry:
         # Create semaphore for concurrency control
         semaphore = AsyncSemaphore(
             global_limit=self.settings.global_parallel,
-            domain_limits={source['domain']: self.settings.max_per_domain 
-                          for source in self.sources}
+            domain_limits={
+                source.domain: self.settings.max_per_domain
+                for source in self.sources if hasattr(source, 'domain')
+            }
         )
         
         async def fetch_source(source_config: Dict[str, Any]) -> List[Article]:
             """Fetch articles from a single source."""
-            domain = source_config['domain']
+            source_name = getattr(source_config, 'name', getattr(source_config, 'domain', 'unknown'))
             
             async with semaphore:
                 try:
                     adapter = self.create_adapter(source_config)
                     async with adapter:
-                        with PerformanceLogger(f"fetch_{domain}", logger):
+                        with PerformanceLogger(f"fetch_{source_name}", logger):
                             articles = await adapter.fetch_articles(
-                                start_date, 
+                                start_date,
                                 limit=limit_per_source
                             )
                             
                             logger.info(
                                 **log_processing_stage(
-                                    stage=f"fetch_{domain}",
+                                    stage=f"fetch_{source_name}",
                                     input_count=1,
                                     output_count=len(articles)
                                 )
@@ -489,7 +563,7 @@ class SourceRegistry:
                 except Exception as e:
                     logger.error(
                         "Failed to fetch from source",
-                        domain=domain,
+                        source=source_name,
                         error=str(e)
                     )
                     return []

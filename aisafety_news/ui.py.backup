@@ -1,0 +1,258 @@
+"""Friendly CLI interface for AI Safety Newsletter Agent."""
+
+import time
+from typing import Optional, Dict, List, Any
+from dataclasses import dataclass
+from contextlib import contextmanager
+
+try:
+    from rich.console import Console
+    from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TaskProgressColumn, TimeRemainingColumn
+    from rich.panel import Panel
+    from rich.text import Text
+    from rich.table import Table
+    from rich import box
+    RICH_AVAILABLE = True
+except ImportError:
+    RICH_AVAILABLE = False
+
+@dataclass
+class StageResult:
+    """Result from a pipeline stage."""
+    input_count: int
+    output_count: int
+    duration: float
+    details: Optional[str] = None
+
+class FriendlyUI:
+    """Friendly CLI interface that replaces verbose JSON logging."""
+    
+    def __init__(self, verbose: bool = False):
+        self.verbose = verbose
+        self.start_time = time.time()
+        self.stage_results: Dict[str, StageResult] = {}
+        
+        if RICH_AVAILABLE:
+            self.console = Console()
+            self.use_rich = True
+        else:
+            self.use_rich = False
+    
+    def show_banner(self):
+        """Display welcome banner with AISTR branding."""
+        if self.use_rich:
+            # AISTR ASCII art without box, left-aligned with padding
+            from rich.text import Text
+            from rich.padding import Padding
+            
+            ascii_art = Text.from_markup("""[bright_blue]
+    ▄▄▄       ██▓  ██████ ▄▄▄█████▓ ██▀███   
+   ▒████▄    ▓██▒▒██    ▒ ▓  ██▒ ▓▒▓██ ▒ ██▒ 
+   ▒██  ▀█▄  ▒██▒░ ▓██▄   ▒ ▓██░ ▒░▓██ ░▄█ ▒ 
+   ░██▄▄▄▄██ ░██░  ▒   ██▒░ ▓██▓ ░ ▒██▀▀█▄   
+    ▓█   ▓██▒░██░▒██████▒▒  ▒██▒ ░ ░██▓ ▒██▒ 
+    ▒▒   ▓▒█░░▓  ▒ ▒▓▒ ▒ ░  ▒ ░░   ░ ▒▓ ░▒▓░ 
+     ▒   ▒▒ ░ ▒ ░░ ░▒  ░ ░    ░      ░▒ ░ ▒░ 
+     ░   ▒    ▒ ░░  ░  ░    ░        ░░   ░  
+         ░  ░ ░        ░              ░      
+
+   [bold cyan]🛡️  AI Safety Türkiye Newsletter Agent  🛡️[/bold cyan]
+   [dim]Powered by Exa Search[/dim][/bright_blue]""")
+            
+            # Add left padding
+            padded_art = Padding(ascii_art, (1, 0, 1, 4))
+            self.console.print(padded_art)
+        else:
+            print(r"")
+            print(r"    _____/\\\\\\_____/\\\\\\\\\_____/\\\\\\\\\\\____/\\\\\\\\\\\\\\\____/\\\\\\_____")
+            print(r"   ___/\\\\\\\\\\\\\__\/////\\\///____/\\\/////////\\\_\///////\\\/////___/\\\///////\\\___")  
+            print(r"    __/\\\/////////\\\_____\/\\\______\//\\\______\///________\/\\\_______\/\\\_____\/\\\___")
+            print(r"     _\/\\\_______\/\\\_____\/\\\_______\////\\\_______________\/\\\_______\/\\\\\\\\\\\/____")
+            print(r"      _\/\\\\\\\\\\\\\\\_____\/\\\__________\////\\\____________\/\\\_______\/\\\//////\\\____")
+            print(r"       _\/\\\/////////\\\_____\/\\\_____________\////\\\_________\/\\\_______\/\\\____\//\\\___")
+            print(r"        _\/\\\_______\/\\\_____\/\\\______/\\\______\//\\\________\/\\\_______\/\\\_____\//\\\__")
+            print(r"         _\/\\\_______\/\\\__/\\\\\\\\\\\_\///\\\\\\\\\\\/_________\/\\\_______\/\\\______\//\\\\_")
+            print(r"          _\///________\///__\///////////____\///////////___________\///________\///________\///__")
+            print(r"")
+            print(r"   🛡️  AI Safety Türkiye Newsletter Agent  🛡️")
+            print(r"   Powered by Exa Search")
+            print()
+    
+    def info(self, message: str, emoji: str = "ℹ️"):
+        """Show informational message."""
+        if self.use_rich:
+            self.console.print(f"{emoji} [bold bright_blue]{message}[/bold bright_blue]")
+        else:
+            print(f"{emoji} {message}")
+    
+    def success(self, message: str, emoji: str = "✅"):
+        """Show success message."""
+        if self.use_rich:
+            self.console.print(f"{emoji} [bold cyan]{message}[/bold cyan]")
+        else:
+            print(f"{emoji} {message}")
+    
+    def warning(self, message: str, emoji: str = "⚠️"):
+        """Show warning message."""
+        if self.use_rich:
+            self.console.print(f"{emoji} [bold yellow]{message}[/bold yellow]")
+        else:
+            print(f"{emoji} {message}")
+    
+    def error(self, message: str, emoji: str = "❌"):
+        """Show error message.""" 
+        if self.use_rich:
+            self.console.print(f"{emoji} [bold red]{message}[/bold red]")
+        else:
+            print(f"{emoji} {message}")
+    
+    @contextmanager
+    def stage(self, name: str, emoji: str = "⏳"):
+        """Context manager for pipeline stages with progress tracking."""
+        stage_start = time.time()
+        
+        if self.use_rich:
+            self.console.print(f"{emoji} [bold]{name}[/bold]")
+            
+            with Progress(
+                SpinnerColumn(),
+                TextColumn("[progress.description]{task.description}"),
+                BarColumn(),
+                TaskProgressColumn(),
+                TimeRemainingColumn(),
+                console=self.console,
+                transient=False
+            ) as progress:
+                task = progress.add_task(f"   {name}...", total=None)
+                
+                try:
+                    yield progress, task
+                except Exception as e:
+                    self.error(f"Failed: {str(e)}")
+                    raise
+        else:
+            print(f"{emoji} {name}...")
+            try:
+                yield None, None
+            except Exception as e:
+                self.error(f"Failed: {str(e)}")
+                raise
+        
+        duration = time.time() - stage_start
+        if not self.verbose:  # Only show timing in non-verbose mode
+            if self.use_rich:
+                self.console.print(f"   [dim]Completed in {duration:.1f}s[/dim]")
+            else:
+                print(f"   Completed in {duration:.1f}s")
+    
+    def show_source_results(self, sources: List[Dict[str, Any]]):
+        """Show results from source fetching."""
+        if self.use_rich:
+            table = Table(show_header=True, header_style="bold cyan", box=box.SIMPLE)
+            table.add_column("Source", style="dim")
+            table.add_column("Articles", justify="right")
+            table.add_column("Status", justify="center")
+            
+            total_articles = 0
+            for source in sources:
+                name = source.get('name', 'Unknown')
+                count = source.get('count', 0)
+                status = "✓" if count > 0 else "⚠️"
+                table.add_row(name, str(count), status)
+                total_articles += count
+            
+            self.console.print(table)
+            self.console.print(f"\n   → [bold]Found {total_articles} articles total[/bold]")
+        else:
+            total_articles = 0
+            for source in sources:
+                name = source.get('name', 'Unknown')
+                count = source.get('count', 0)
+                status = "✓" if count > 0 else "⚠️"
+                print(f"   {status} {name:<25} [{count} articles]")
+                total_articles += count
+            print(f"\n   → Found {total_articles} articles total")
+    
+    def update_progress(self, progress, task, current: int, total: int, description: str = ""):
+        """Update progress bar."""
+        if self.use_rich and progress and task is not None:
+            progress.update(task, completed=current, total=total, description=f"   {description}")
+    
+    def complete_progress(self, progress, task, result_message: str):
+        """Complete progress bar with result."""
+        if self.use_rich and progress and task is not None:
+            progress.update(task, completed=100, total=100)
+            progress.stop()
+            self.console.print(f"   → [bold]{result_message}[/bold]")
+    
+    def show_model_info(self, model_name: str):
+        """Show which model is being used."""
+        if self.use_rich:
+            self.console.print(f"   🧠 [dim]Using {model_name}[/dim]")
+        else:
+            print(f"   🧠 Using {model_name}")
+    
+    def show_final_summary(self, 
+                          total_sources: int,
+                          total_articles: int, 
+                          filtered_articles: int,
+                          final_articles: int,
+                          output_file: str,
+                          model_used: str):
+        """Show final summary with celebration."""
+        duration = time.time() - self.start_time
+        
+        if self.use_rich:
+            # Create summary table
+            summary_table = Table(show_header=False, box=box.SIMPLE, padding=(0, 2))
+            summary_table.add_column("Metric", style="dim blue")
+            summary_table.add_column("Value", style="bold bright_blue")
+            
+            summary_table.add_row("📊 Sources scanned", str(total_sources))
+            summary_table.add_row("📰 Articles found", str(total_articles))
+            summary_table.add_row("🔍 Passed relevance filter", str(filtered_articles))
+            summary_table.add_row("⭐ Final selection", str(final_articles))
+            summary_table.add_row("🧠 Model used", model_used)
+            summary_table.add_row("💾 Output file", output_file)
+            summary_table.add_row("⏱️  Total time", f"{duration:.1f}s")
+            
+            panel = Panel(
+                summary_table,
+                title="🎉 [bold cyan]AISTR Newsletter Ready![/bold cyan] 🎉",
+                title_align="center",
+                box=box.ROUNDED,
+                border_style="bright_blue"
+            )
+            
+            self.console.print()
+            self.console.print(panel)
+            
+        else:
+            print("\n🎉 Newsletter ready!")
+            print(f"📊 {final_articles} top AI safety stories curated from {total_sources} major news sources")
+            print(f"💾 Output: {output_file}")
+            print(f"⏱️  Completed in {duration:.1f} seconds")
+    
+    def verbose_log(self, message: str):
+        """Log message only in verbose mode."""
+        if self.verbose:
+            if self.use_rich:
+                self.console.print(f"[dim]{message}[/dim]")
+            else:
+                print(f"DEBUG: {message}")
+
+# Global UI instance
+_ui_instance: Optional[FriendlyUI] = None
+
+def get_ui(verbose: bool = False) -> FriendlyUI:
+    """Get or create global UI instance."""
+    global _ui_instance
+    if _ui_instance is None:
+        _ui_instance = FriendlyUI(verbose=verbose)
+    return _ui_instance
+
+def init_ui(verbose: bool = False) -> FriendlyUI:
+    """Initialize UI for the session."""
+    global _ui_instance
+    _ui_instance = FriendlyUI(verbose=verbose)
+    return _ui_instance

@@ -10,7 +10,7 @@ def test_settings_creation(mock_env):
     """Test settings creation with environment variables."""
     settings = Settings()
     
-    assert settings.openrouter_api_key == "test-key"
+    assert settings.google_ai_api_key == "test-key"
     assert settings.max_per_domain == 10
     assert settings.global_parallel == 30
     assert settings.w_source_priority == 0.4
@@ -23,7 +23,7 @@ def test_settings_weight_validation():
     """Test weight validation."""
     with pytest.raises(ValueError, match="Weight must be between 0 and 1"):
         Settings(
-            openrouter_api_key="test",
+            google_ai_api_key="test",
             w_source_priority=1.5  # Invalid weight
         )
 
@@ -32,7 +32,7 @@ def test_settings_threshold_validation():
     """Test deduplication threshold validation."""
     with pytest.raises(ValueError, match="Deduplication threshold must be between 0 and 1"):
         Settings(
-            openrouter_api_key="test",
+            google_ai_api_key="test",
             dedupe_threshold=1.5  # Invalid threshold
         )
 
@@ -83,7 +83,7 @@ def test_config_validation(mock_env):
 
 def test_config_validation_missing_api_key(monkeypatch):
     """Test validation fails without API key."""
-    monkeypatch.setenv("OPENROUTER_API_KEY", "")
+    monkeypatch.setenv("GOOGLE_AI_API_KEY", "")
     
     # Should fail without API key
     assert validate_config() == False

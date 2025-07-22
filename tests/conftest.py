@@ -8,7 +8,7 @@ from typing import Generator
 import pytest
 
 # Set test environment
-os.environ["OPENROUTER_API_KEY"] = "test-key"
+os.environ["GOOGLE_AI_API_KEY"] = "test-key"
 os.environ["LOG_LEVEL"] = "DEBUG"
 os.environ["JSON_LOGGING"] = "false"
 
@@ -25,7 +25,7 @@ def mock_env(monkeypatch, temp_dir):
     """Mock environment variables for testing."""
     monkeypatch.setenv("DATA_DIR", str(temp_dir / "data"))
     monkeypatch.setenv("CACHE_DIR", str(temp_dir / "cache"))
-    monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
+    monkeypatch.setenv("GOOGLE_AI_API_KEY", "test-key")
 
 
 @pytest.fixture

@@ -1,4 +1,4 @@
-"""Async OpenRouter LLM client with fallback and retry logic."""
+"""Async OpenAI LLM client with fallback and retry logic."""
 
 import asyncio
 import json
@@ -8,13 +8,39 @@ from typing import Any, Dict, Iterable, List, Optional, Union
 import httpx
 from pydantic import BaseModel
 
+try:
+    from openai import AsyncOpenAI
+    OPENAI_AVAILABLE = True
+except ImportError:
+    OPENAI_AVAILABLE = False
+    AsyncOpenAI = None
+
+try:
+    from google import genai
+    GOOGLE_AI_AVAILABLE = True
+except ImportError:
+    GOOGLE_AI_AVAILABLE = False
+    genai = None
+
 from ..config import get_model_config, get_settings, LLMRoute, ModelSettings
 from ..logging import get_logger, log_api_request, log_error
 from ..utils import retry_async
 
 logger = get_logger(__name__)
 
-OPENROUTER_ENDPOINT = "https://openrouter.ai/api/v1/chat/completions"
+# OpenAI API model mapping
+OPENAI_MODELS = {
+    "gpt-4o": "gpt-4o",
+    "gpt-4o-mini": "gpt-4o-mini",
+    "gpt-4": "gpt-4",
+    "gpt-3.5-turbo": "gpt-3.5-turbo"
+}
+
+# Gemini API model mapping (fallback support)
+GEMINI_MODELS = {
+    "gemini-2.5-flash": "gemini-2.5-flash",
+    "gemini-2.5-flash-lite-preview-06-17": "gemini-2.5-flash-lite-preview-06-17",
+}
 
 
 class ChatMessage(BaseModel):
@@ -37,7 +63,7 @@ class LLMError(Exception):
 
 
 class LLMClient:
-    """Async OpenRouter client with fallback and retry capabilities."""
+    """Async Google Gemini client with fallback and retry capabilities."""
     
     def __init__(self, route_name: str):
         """Initialize LLM client.
@@ -56,9 +82,168 @@ class LLMClient:
             logger.error(f"Failed to load LLM route '{route_name}': {e}")
             raise LLMError(f"Invalid LLM route: {route_name}") from e
         
-        self.api_key = self.settings.openrouter_api_key
-        if not self.api_key:
-            raise LLMError("OPENROUTER_API_KEY is required")
+        # Initialize OpenAI client by default
+        self.openai_api_key = getattr(self.settings, 'openai_api_key', None)
+        if self.openai_api_key and OPENAI_AVAILABLE:
+            self._openai_client = AsyncOpenAI(api_key=self.openai_api_key)
+            logger.info("OpenAI client initialized")
+        else:
+            self._openai_client = None
+            logger.warning("OpenAI API key not found or OpenAI SDK not available")
+        
+        # Initialize Gemini client as fallback
+        self.google_api_key = getattr(self.settings, 'google_ai_api_key', None)
+        if self.google_api_key and GOOGLE_AI_AVAILABLE:
+            self._gemini_client = genai.Client(api_key=self.google_api_key)
+            logger.info("Gemini client initialized as fallback")
+        else:
+            self._gemini_client = None
+            logger.warning("Google AI API key not found or Google AI SDK not available")
+        
+        if not self._openai_client and not self._gemini_client:
+            raise LLMError("Neither OpenAI nor Google AI API keys are available")
+    
+    def _is_openai_model(self, model: str) -> bool:
+        """Check if model is an OpenAI model."""
+        return model in OPENAI_MODELS
+    
+    def _is_gemini_model(self, model: str) -> bool:
+        """Check if model is a Gemini model."""
+        return model in GEMINI_MODELS
+    
+    async def _make_openai_request(
+        self,
+        model: str,
+        messages: List[ChatMessage],
+        temperature: Optional[float] = None,
+        max_tokens: Optional[int] = None,
+        timeout: Optional[int] = None
+    ) -> LLMResponse:
+        """Make request to OpenAI API."""
+        if not self._openai_client:
+            raise LLMError("OpenAI client not initialized")
+        
+        start_time = time.time()
+        openai_model = OPENAI_MODELS.get(model, model)
+        
+        # Convert messages to OpenAI format
+        openai_messages = []
+        for msg in messages:
+            openai_messages.append({
+                "role": msg.role,
+                "content": msg.content
+            })
+        
+        try:
+            response = await self._openai_client.chat.completions.create(
+                model=openai_model,
+                messages=openai_messages,
+                temperature=temperature or self.model_settings.temperature,
+                max_tokens=max_tokens or self.model_settings.max_tokens,
+                timeout=timeout or self.model_settings.timeout_seconds
+            )
+            
+            response_time = time.time() - start_time
+            content = response.choices[0].message.content
+            
+            if not content:
+                raise LLMError("Empty response content from OpenAI")
+            
+            logger.info(
+                "OpenAI API request successful",
+                model=openai_model,
+                response_time=response_time
+            )
+            
+            return LLMResponse(
+                content=content,
+                model=openai_model,
+                usage={
+                    "prompt_tokens": response.usage.prompt_tokens,
+                    "completion_tokens": response.usage.completion_tokens,
+                    "total_tokens": response.usage.total_tokens
+                } if response.usage else None,
+                response_time=response_time
+            )
+            
+        except Exception as e:
+            error_msg = f"OpenAI API error for model {openai_model}: {str(e)}"
+            logger.error(error_msg)
+            raise LLMError(error_msg) from e
+    
+    async def _make_gemini_request(
+        self,
+        model: str,
+        messages: List[ChatMessage],
+        temperature: Optional[float] = None,
+        max_tokens: Optional[int] = None,
+        timeout: Optional[int] = None
+    ) -> LLMResponse:
+        """Make request to Gemini API."""
+        if not self._gemini_client:
+            raise LLMError("Gemini client not initialized")
+        
+        start_time = time.time()
+        gemini_model = GEMINI_MODELS.get(model, model)
+        
+        # Convert messages to Gemini format
+        gemini_messages = self._convert_to_gemini_format(messages)
+        
+        # Prepare generation config
+        generation_config = {
+            "temperature": temperature or self.model_settings.temperature,
+            "max_output_tokens": max_tokens or self.model_settings.max_tokens,
+        }
+        
+        try:
+            # Run in thread pool to avoid blocking async event loop
+            loop = asyncio.get_event_loop()
+            
+            response = await loop.run_in_executor(
+                None,
+                lambda: self._gemini_client.models.generate_content(
+                    model=f"models/{gemini_model}",
+                    contents=gemini_messages,
+                    config=generation_config
+                )
+            )
+            
+            response_time = time.time() - start_time
+            
+            # Extract response content (simplified from previous complex logic)
+            if hasattr(response, 'text') and response.text:
+                content = response.text
+            else:
+                raise LLMError("Could not extract content from Gemini response")
+            
+            if not content or content.strip() == "":
+                raise LLMError("Empty response content from Gemini")
+            
+            logger.info(
+                "Gemini API request successful",
+                model=gemini_model,
+                response_time=response_time
+            )
+            
+            # Estimate usage (Gemini doesn't provide exact token counts)
+            usage = {
+                "prompt_tokens": sum(len(msg.content.split()) * 1.3 for msg in messages),
+                "completion_tokens": len(content.split()) * 1.3,
+                "total_tokens": 0
+            }
+            usage["total_tokens"] = usage["prompt_tokens"] + usage["completion_tokens"]
+            
+            return LLMResponse(
+                content=content,
+                model=gemini_model,
+                usage=usage,
+                response_time=response_time
+            )
+        
+        except Exception as e:
+            error_msg = f"Gemini API error for model {gemini_model}: {str(e)}"
+            logger.error(error_msg)
+            raise LLMError(error_msg) from e
     
     async def _make_request(
         self,
@@ -68,121 +253,73 @@ class LLMClient:
         max_tokens: Optional[int] = None,
         timeout: Optional[int] = None
     ) -> LLMResponse:
-        """Make a single request to OpenRouter API.
+        """Route request to appropriate API based on model type."""
+        if self._is_openai_model(model):
+            if not self._openai_client:
+                raise LLMError(f"OpenAI model {model} requested but OpenAI client not available")
+            return await self._make_openai_request(model, messages, temperature, max_tokens, timeout)
+        elif self._is_gemini_model(model):
+            if not self._gemini_client:
+                raise LLMError(f"Gemini model {model} requested but Gemini client not available")
+            return await self._make_gemini_request(model, messages, temperature, max_tokens, timeout)
+        else:
+            # Default to OpenAI if available, otherwise Gemini
+            if self._openai_client:
+                logger.warning(f"Unknown model {model}, defaulting to OpenAI")
+                return await self._make_openai_request(model, messages, temperature, max_tokens, timeout)
+            elif self._gemini_client:
+                logger.warning(f"Unknown model {model}, defaulting to Gemini")
+                return await self._make_gemini_request(model, messages, temperature, max_tokens, timeout)
+            else:
+                raise LLMError(f"No available clients for model {model}")
+    
+    def _convert_to_gemini_format(self, messages: List[ChatMessage]) -> List[Dict[str, Any]]:
+        """Convert chat messages to Gemini format.
         
         Args:
-            model: Model name
-            messages: Chat messages
-            temperature: Sampling temperature
-            max_tokens: Maximum tokens
-            timeout: Request timeout
+            messages: List of chat messages
             
         Returns:
-            LLM response
-            
-        Raises:
-            LLMError: If request fails
+            List of content objects for Gemini API
         """
-        start_time = time.time()
+        # Gemini expects a list of content objects
+        # System messages are combined with the first user message
+        # Only user and model roles are supported
+        gemini_contents = []
+        system_prompt = ""
         
-        # Prepare request payload
-        payload = {
-            "model": model,
-            "messages": [msg.model_dump() for msg in messages],
-            "temperature": temperature or self.model_settings.temperature,
-            "max_tokens": max_tokens or self.model_settings.max_tokens,
-        }
+        # Extract system messages first
+        for msg in messages:
+            if msg.role == "system":
+                system_prompt += msg.content + "\n\n"
         
-        headers = {
-            "Authorization": f"Bearer {self.api_key}",
-            "Content-Type": "application/json",
-            "HTTP-Referer": "https://github.com/your/repo",
-            "User-Agent": self.settings.user_agent,
-        }
+        # Convert remaining messages to Gemini format
+        for msg in messages:
+            if msg.role == "user":
+                content = msg.content
+                # Prepend system prompt to first user message
+                if system_prompt and not gemini_contents:
+                    content = system_prompt + content
+                
+                gemini_contents.append({
+                    "role": "user",
+                    "parts": [{"text": content}]
+                })
+            elif msg.role == "assistant":
+                gemini_contents.append({
+                    "role": "model", 
+                    "parts": [{"text": msg.content}]
+                })
+            # Skip system messages as they're already handled
         
-        timeout_seconds = timeout or self.model_settings.timeout_seconds
+        # If no user message exists but we have system prompt, create one
+        if not gemini_contents and system_prompt:
+            gemini_contents.append({
+                "role": "user",
+                "parts": [{"text": system_prompt.strip()}]
+            })
         
-        try:
-            async with httpx.AsyncClient(timeout=timeout_seconds) as client:
-                logger.debug(
-                    "Making LLM request",
-                    model=model,
-                    messages_count=len(messages),
-                    temperature=payload["temperature"],
-                    max_tokens=payload["max_tokens"]
-                )
-                
-                response = await client.post(
-                    OPENROUTER_ENDPOINT,
-                    json=payload,
-                    headers=headers
-                )
-                
-                response_time = time.time() - start_time
-                
-                # Log API request
-                logger.info(
-                    **log_api_request(
-                        method="POST",
-                        url=OPENROUTER_ENDPOINT,
-                        status_code=response.status_code,
-                        response_time=response_time,
-                        model=model
-                    )
-                )
-                
-                if response.status_code != 200:
-                    error_msg = f"OpenRouter API error {response.status_code}: {response.text}"
-                    logger.error(error_msg, model=model, status_code=response.status_code)
-                    raise LLMError(error_msg)
-                
-                response_data = response.json()
-                
-                # Extract response content
-                if "choices" not in response_data or not response_data["choices"]:
-                    raise LLMError("No choices in OpenRouter response")
-                
-                choice = response_data["choices"][0]
-                if "message" not in choice or "content" not in choice["message"]:
-                    raise LLMError("Invalid response format from OpenRouter")
-                
-                content = choice["message"]["content"]
-                usage = response_data.get("usage", {})
-                
-                logger.debug(
-                    "LLM request successful",
-                    model=model,
-                    response_time=response_time,
-                    content_length=len(content),
-                    usage=usage
-                )
-                
-                return LLMResponse(
-                    content=content,
-                    model=model,
-                    usage=usage,
-                    response_time=response_time
-                )
-        
-        except httpx.TimeoutException as e:
-            error_msg = f"Request timeout for model {model}"
-            logger.warning(error_msg, timeout=timeout_seconds)
-            raise LLMError(error_msg) from e
-        
-        except httpx.RequestError as e:
-            error_msg = f"Request error for model {model}: {str(e)}"
-            logger.warning(error_msg)
-            raise LLMError(error_msg) from e
-        
-        except json.JSONDecodeError as e:
-            error_msg = f"Invalid JSON response from model {model}"
-            logger.warning(error_msg)
-            raise LLMError(error_msg) from e
-        
-        except Exception as e:
-            error_msg = f"Unexpected error for model {model}: {str(e)}"
-            logger.error(**log_error(e, context=f"LLM request to {model}"))
-            raise LLMError(error_msg) from e
+        return gemini_contents
     
     async def chat(
         self,
@@ -211,8 +348,13 @@ class LLMClient:
         if not normalized_messages:
             raise LLMError("No messages provided")
         
-        # Try all models in the route
-        models_to_try = [self.route.primary] + self.route.fallback
+        # Check for model override from CLI/settings
+        if self.settings.llm_model_override:
+            models_to_try = [self.settings.llm_model_override]
+            logger.info(f"Using model override: {self.settings.llm_model_override}")
+        else:
+            # Try all models in the route
+            models_to_try = [self.route.primary] + self.route.fallback
         last_error = None
         
         for model in models_to_try:
