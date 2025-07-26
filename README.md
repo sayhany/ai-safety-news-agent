@@ -26,13 +26,13 @@ An intelligent Python agent that automatically discovers, analyzes, and curates 
 Install directly from the repository:
 
 ```bash
-pip install git+https://github.com/yourusername/ai-safety-news-agent.git
+pip install git+https://github.com/sayhany/ai-safety-news-agent.git
 ```
 
 Or install locally:
 
 ```bash
-git clone <repository-url>
+git clone https://github.com/sayhany/ai-safety-news-agent
 cd ai-safety-news-agent
 pip install .
 ```
@@ -43,7 +43,7 @@ For development or customization:
 
 1. **Clone and enter the project:**
    ```bash
-   git clone <repository-url>
+   git clone https://github.com/sayhany/ai-safety-news-agent
    cd ai-safety-news-agent
    ```
 
