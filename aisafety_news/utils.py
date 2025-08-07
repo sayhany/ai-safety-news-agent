@@ -9,9 +9,9 @@ from pathlib import Path
 from typing import Any, TypeVar
 from urllib.parse import urlparse
 
-from .logging import get_logger
+import logging
 
-logger = get_logger(__name__)
+logger = logging.getLogger(__name__)
 
 T = TypeVar('T')
 
