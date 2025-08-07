@@ -93,7 +93,6 @@ jobs:
           p/python
           p/security-audit
           p/secrets
-        generateSarif: "1"
         
     - name: Upload Bandit report
       uses: actions/upload-artifact@v4

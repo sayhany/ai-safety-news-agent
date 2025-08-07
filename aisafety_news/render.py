@@ -69,12 +69,13 @@ class NewsletterRenderer:
             template_dir = Path(__file__).parent.parent / 'templates'
         self.template_dir = Path(template_dir)
 
-        # Initialize Jinja2 environment
+        # Initialize Jinja2 environment with autoescape for security
         if JINJA2_AVAILABLE:
             self.jinja_env = Environment(
                 loader=FileSystemLoader(str(self.template_dir)),
                 trim_blocks=True,
-                lstrip_blocks=True
+                lstrip_blocks=True,
+                autoescape=True
             )
             self._register_filters()
         else:
