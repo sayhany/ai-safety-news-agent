@@ -193,8 +193,8 @@ def validate_config(settings: Settings) -> bool:
     """Validate configuration completeness."""
     try:
         # Check required settings if not in mock mode
-        if not settings.mock and not settings.google_ai_api_key:
-            raise ValueError("GOOGLE_AI_API_KEY is required when not in mock mode")
+        if not settings.mock and not settings.google_ai_api_key and not settings.openai_api_key:
+            raise ValueError("Either GOOGLE_AI_API_KEY or OPENAI_API_KEY is required when not in mock mode")
 
         # Validate weight sum (should be close to 1.0)
         weight_sum = (

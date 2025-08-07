@@ -114,6 +114,7 @@ async def test_exa_adapter_direct():
         
         adapter = ExaSearchAPIAdapter(test_source)
         print(f"✅ ExaSearchAPIAdapter created successfully")
+        print(f"   Search type: {adapter.search_type} (default: auto)")
         
         # Test API key validation
         settings = get_settings()

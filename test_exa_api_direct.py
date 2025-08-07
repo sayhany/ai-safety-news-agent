@@ -69,11 +69,13 @@ async def test_exa_api_call(api_key, exa_module):
         query = "AI safety research"
         print(f"🔄 Testing query: '{query}'")
         
-        # Make API call
+        # Make API call with auto search type (default)
         results = await exa.search_and_contents_async(
             query,
+            type="auto",  # Use auto search for intelligent combination
             num_results=3,
-            use_autoprompt=True,
+            use_autoprompt=True
+            # Removed livecrawl="never" to allow fresh content
         )
         
         if hasattr(results, 'results') and results.results:

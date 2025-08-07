@@ -196,6 +196,11 @@ class SearchAPIAdapter(SourceAdapter):
 class ExaSearchAPIAdapter(SearchAPIAdapter):
     """Exa Search API adapter."""
 
+    def __init__(self, source_config: Dict[str, Any]):
+        super().__init__(source_config)
+        # Get search type from config, default to 'auto' for intelligent combination
+        self.search_type = getattr(source_config, 'search_type', 'auto')
+
     async def fetch_articles(
         self,
         start_date: datetime,
@@ -234,10 +239,12 @@ class ExaSearchAPIAdapter(SearchAPIAdapter):
             None,
             lambda: exa.search_and_contents(
                 self.query,
+                type=self.search_type,  # Use configured search type (default: 'auto')
                 num_results=limit or 10,
                 start_published_date=start_date.strftime('%Y-%m-%dT%H:%M:%SZ'),
                 use_autoprompt=True,
                 include_domains=approved_domains
+                # Removed livecrawl="never" to allow fresh content retrieval
             )
         )
 

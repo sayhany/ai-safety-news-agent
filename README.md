@@ -4,7 +4,7 @@ An intelligent Python agent that automatically discovers, analyzes, and curates 
 
 ## 🌟 Features
 
-- **🔍 Smart Content Discovery**: Uses Exa, Brave, and Bing search APIs to find the latest AI safety content
+- **🔍 Smart Content Discovery**: Uses Exa Auto search API (intelligently combines neural and keyword search) to find the latest AI safety content
 - **🧠 AI-Powered Filtering**: Leverages Google Gemini and OpenAI models to assess relevance and importance
 - **🔄 Intelligent Deduplication**: Uses FAISS embeddings to identify and remove duplicate articles
 - **📊 Weighted Scoring System**: Configurable scoring that prioritizes the most important content
