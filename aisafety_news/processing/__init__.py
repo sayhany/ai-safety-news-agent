@@ -1,13 +1,13 @@
 """Content processing module."""
 
-from .relevance import filter_relevance, RelevanceFilter, RelevanceLevel
-from .dedupe import deduplicate_articles, ArticleDeduplicator, DuplicateGroup
-from .scoring import score_articles, ArticleScorer, ScoringWeights, SourceTier
-from .text_utils import clean_html_text, canonical_title, extract_keywords
+from .dedupe import ArticleDeduplicator, DuplicateGroup, deduplicate_articles
+from .relevance import RelevanceFilter, RelevanceLevel, filter_relevance
+from .scoring import ArticleScorer, ScoringWeights, SourceTier, score_articles
+from .text_utils import canonical_title, clean_html_text, extract_keywords
 
 __all__ = [
     'filter_relevance',
-    'RelevanceFilter', 
+    'RelevanceFilter',
     'RelevanceLevel',
     'deduplicate_articles',
     'ArticleDeduplicator',

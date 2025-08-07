@@ -1,22 +1,20 @@
 import asyncio
 import sys
-from datetime import datetime
-from pathlib import Path
-from typing import List, Optional
 
 import click
 
-from .config import Settings, get_settings, validate_config, get_model_config
-from .ingest.sources import Article, gather_articles
+from .config import Settings, get_model_config, get_settings, validate_config
+from .ingest.sources import gather_articles
 from .logging import PerformanceLogger, get_logger, setup_logging
 from .models.llm_client import create_llm_client
 from .processing.dedupe import deduplicate_articles as dedupe_articles
 from .processing.relevance import filter_relevance
 from .processing.scoring import score_articles
+from .render import NewsletterConfig
+from .render import render_newsletter as render_newsletter_md
+from .summarize import SummaryConfig
+from .summarize import summarize_articles as llm_summarize_articles
 from .ui import init_ui
-from .render import NewsletterConfig, render_newsletter as render_newsletter_md
-from .summarize import SummaryConfig, summarize_articles as llm_summarize_articles
-from .utils import parse_date_string
 
 logger = get_logger(__name__)
 
@@ -41,14 +39,14 @@ async def run_pipeline(
     # Generate default filename if not provided
     if output_filename is None:
         output_filename = f"newsletter_{start_date}.md"
-    
+
     model_config = get_model_config()
     default_model = model_config.get_llm_route("relevance").primary
     model_used = settings.llm_model_override or default_model
 
     # Track metrics for final summary
     total_sources = len(model_config.get_search_sources()) + len(model_config.get_approved_sources())
-    
+
     if ui:
         ui.verbose_log(f"Starting pipeline with start_date={start_date}, mock={settings.mock}, max_articles={settings.max_articles}")
         if settings.llm_model_override:
@@ -64,7 +62,7 @@ async def run_pipeline(
                         mock=settings.mock,
                         limit_per_source=10,
                     )
-                    
+
                     if progress:
                         ui.complete_progress(progress, task, f"Found {len(articles)} articles total")
             else:
@@ -92,7 +90,7 @@ async def run_pipeline(
                     if not settings.mock:
                         ui.show_model_info(model_used)
                     articles = await filter_relevance(articles, settings, llm_client)
-                    
+
                     if progress:
                         ui.complete_progress(progress, task, f"{len(articles)} articles passed relevance filter")
             else:
@@ -100,13 +98,13 @@ async def run_pipeline(
 
             filtered_count = len(articles)
 
-            # Stage 3: Deduplication  
+            # Stage 3: Deduplication
             if ui:
                 with ui.stage("Removing duplicates", "🔄") as (progress, task):
                     articles, duplicate_groups = await dedupe_articles(
                         articles, settings, llm_client
                     )
-                    
+
                     duplicates_removed = sum(len(group.duplicates) for group in duplicate_groups)
                     if progress:
                         ui.complete_progress(progress, task, f"{len(articles)} unique articles remain ({duplicates_removed} duplicates removed)")
@@ -119,7 +117,7 @@ async def run_pipeline(
             if ui:
                 with ui.stage("Scoring articles by importance", "⭐") as (progress, task):
                     articles = score_articles(articles, settings)
-                    
+
                     if progress:
                         ui.complete_progress(progress, task, f"All {len(articles)} articles scored")
             else:
@@ -140,7 +138,7 @@ async def run_pipeline(
                     top_articles = await llm_summarize_articles(
                         top_articles, settings, llm_client, summary_config
                     )
-                    
+
                     # Rendering
                     newsletter_config = NewsletterConfig(
                         max_articles=settings.max_articles,
@@ -151,17 +149,17 @@ async def run_pipeline(
                     newsletter = render_newsletter_md(
                         top_articles, settings, newsletter_config
                     )
-                    
+
                     if progress:
                         ui.complete_progress(progress, task, "Newsletter crafted and formatted")
-                        
+
             else:
                 # Non-UI path
                 summary_config = SummaryConfig()
                 top_articles = await llm_summarize_articles(
                     top_articles, settings, llm_client, summary_config
                 )
-                
+
                 newsletter_config = NewsletterConfig(
                     max_articles=settings.max_articles,
                     include_summaries=True,
@@ -212,8 +210,8 @@ async def run_pipeline(
 @click.option("--api-key", help="Google AI API key to use.")
 @click.option("--model", help="LLM model to use (e.g., 'gemini-2.5-flash').")
 @click.option(
-    "--search-type", 
-    type=click.Choice(["auto", "neural", "keyword", "fast"]), 
+    "--search-type",
+    type=click.Choice(["auto", "neural", "keyword", "fast"]),
     help="Search type for Exa API: auto (default), neural, keyword, or fast"
 )
 def cli(
@@ -232,7 +230,7 @@ def cli(
     # Set log level to suppress noise unless verbose mode is enabled
     actual_log_level = "INFO" if verbose else log_level
     setup_logging(log_level=actual_log_level, json_logging=False)
-    
+
     # Suppress ALL logs unless in verbose mode
     if not verbose:
         import logging
@@ -245,7 +243,7 @@ def cli(
         logging.getLogger("aiohttp").setLevel(logging.ERROR)
         # Suppress application module logs
         logging.getLogger("aisafety_news").setLevel(logging.ERROR)
-    
+
     # Initialize friendly UI
     ui = init_ui(verbose=verbose)
     ui.show_banner()
@@ -279,8 +277,8 @@ def cli(
         output_filename = output.name if output.name != "<stdout>" else f"newsletter_{start_date_str}.md"
 
         newsletter = asyncio.run(run_pipeline(
-            settings=settings, 
-            start_date=start_date_str, 
+            settings=settings,
+            start_date=start_date_str,
             ui=ui,
             output_filename=output_filename
         ))

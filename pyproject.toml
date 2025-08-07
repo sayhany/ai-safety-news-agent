@@ -35,11 +35,15 @@ mypy = "^1.10"
 coverage = "^7.5"
 pytest-cov = "^4.1"
 aresponses = "^3.0.0"
+safety = "^3.0"
+bandit = "^1.7"
+pip-audit = "^2.6"
 
 [tool.poetry.scripts]
 aisafety-news = "aisafety_news.orchestrator:cli"
 aistr-news-agent = "aisafety_news.orchestrator:cli"
 check-sources = "aisafety_news.check_sources:main"
+security-check = "scripts.security-check:main"
 
 [build-system]
 requires = ["poetry-core"]
@@ -80,3 +84,10 @@ exclude_lines = [
     "if 0:",
     "if __name__ == .__main__.:",
 ]
+
+[tool.bandit]
+exclude_dirs = ["tests", "test_*.py", ".venv"]
+skips = ["B101"]  # Skip assert_used test
+
+[tool.safety]
+ignore = []  # Add CVE IDs to ignore specific vulnerabilities if needed

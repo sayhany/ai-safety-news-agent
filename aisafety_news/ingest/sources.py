@@ -2,35 +2,40 @@
 
 import asyncio
 from abc import ABC, abstractmethod
-from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional, Set
-from urllib.parse import urljoin, urlparse
+from datetime import UTC, datetime
+from typing import Any
+from urllib.parse import urljoin
 
-import aiohttp
 import aiohttp
 from exa_py import Exa
 from selectolax.parser import HTMLParser
 
 from ..config import get_model_config, get_settings
-from ..logging import get_logger, log_processing_stage, PerformanceLogger
+from ..logging import PerformanceLogger, get_logger, log_processing_stage
 from ..utils import (
-    extract_domain, normalize_url, is_valid_url,
-    parse_date_string, clean_text, AsyncSemaphore, retry_async
+    AsyncSemaphore,
+    clean_text,
+    enforce_https_url,
+    extract_domain,
+    normalize_url,
+    parse_date_string,
+    retry_async,
+    validate_request_size,
 )
 
 logger = get_logger(__name__)
 
 
-class Article(Dict[str, Any]):
+class Article(dict[str, Any]):
     """Article data structure with validation."""
-    
+
     def __init__(self, **kwargs):
         # Required fields
         required_fields = ['title', 'url', 'content', 'published_date', 'source']
         for field in required_fields:
             if field not in kwargs:
                 raise ValueError(f"Missing required field: {field}")
-        
+
         # Set defaults for optional fields
         defaults = {
             'description': '',
@@ -38,22 +43,22 @@ class Article(Dict[str, Any]):
             'tags': [],
             'language': 'en',
             'content_hash': '',
-            'scraped_at': datetime.now(timezone.utc).isoformat(),
+            'scraped_at': datetime.now(UTC).isoformat(),
         }
-        
+
         # Merge with defaults
         for key, default_value in defaults.items():
             kwargs.setdefault(key, default_value)
-        
+
         super().__init__(**kwargs)
-    
+
     @property
     def domain(self) -> str:
         """Get domain from URL."""
         return extract_domain(self['url'])
-    
+
     @property
-    def published_datetime(self) -> Optional[datetime]:
+    def published_datetime(self) -> datetime | None:
         """Get published date as datetime object."""
         if isinstance(self['published_date'], datetime):
             return self['published_date']
@@ -64,40 +69,51 @@ class Article(Dict[str, Any]):
 
 class SourceAdapter(ABC):
     """Abstract base class for news source adapters."""
-    
-    def __init__(self, source_config: Dict[str, Any]):
+
+    def __init__(self, source_config: dict[str, Any]):
         self.config = source_config
         self.url = getattr(source_config, 'url', None)
         self.domain = getattr(source_config, 'domain', None)
         self.category = getattr(source_config, 'category', 'general')
         self.priority = getattr(source_config, 'priority', 0.5)
-        
+
         self.settings = get_settings()
-        self.session: Optional[aiohttp.ClientSession] = None
-    
+        self.session: aiohttp.ClientSession | None = None
+
     async def __aenter__(self):
         """Async context manager entry."""
         timeout = aiohttp.ClientTimeout(total=30)
-        connector = aiohttp.TCPConnector(limit=10, limit_per_host=5)
-        
+        connector = aiohttp.TCPConnector(
+            limit=10,
+            limit_per_host=5,
+            force_close=True,  # Security: Force connection close
+            enable_cleanup_closed=True
+        )
+
         self.session = aiohttp.ClientSession(
             timeout=timeout,
             connector=connector,
-            headers={'User-Agent': self.settings.user_agent}
+            headers={
+                'User-Agent': self.settings.user_agent,
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                'Accept-Language': 'en-US,en;q=0.5',
+                'DNT': '1',  # Do Not Track
+                'Connection': 'close'  # Security: Don't keep connections open
+            }
         )
         return self
-    
+
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         """Async context manager exit."""
         if self.session:
             await self.session.close()
-    
+
     @abstractmethod
     async def fetch_articles(
-        self, 
-        start_date: datetime, 
-        limit: Optional[int] = None
-    ) -> List[Article]:
+        self,
+        start_date: datetime,
+        limit: int | None = None
+    ) -> list[Article]:
         """Fetch articles from the source.
         
         Args:
@@ -108,7 +124,7 @@ class SourceAdapter(ABC):
             List of Article objects
         """
         pass
-    
+
     async def _fetch_url(self, url: str, retry_count: int = 3) -> str:
         """Fetch URL content with error handling and retry logic.
         
@@ -124,23 +140,42 @@ class SourceAdapter(ABC):
         """
         if not self.session:
             raise RuntimeError("Session not initialized. Use async context manager.")
-        
+
         logger.debug("Fetching URL", url=url, domain=self.domain)
-        
+
         async def fetch_with_session():
-            async with self.session.get(url) as response:
+            # Enforce HTTPS if configured
+            if self.settings.https_only:
+                url_to_fetch = enforce_https_url(url)
+            else:
+                url_to_fetch = url
+
+            async with self.session.get(url_to_fetch) as response:
                 response.raise_for_status()
+
+                # Validate response size
+                content_length = response.headers.get('content-length')
+                if content_length and not validate_request_size(
+                    int(content_length),
+                    self.settings.max_response_size_mb
+                ):
+                    raise ValueError(f"Response too large: {content_length} bytes")
+
                 content = await response.text()
-                
+
+                # Double-check actual content size
+                if not validate_request_size(len(content.encode('utf-8')), self.settings.max_response_size_mb):
+                    raise ValueError(f"Response content too large: {len(content)} characters")
+
                 logger.debug(
                     "URL fetched successfully",
-                    url=url,
+                    url=url_to_fetch,
                     status=response.status,
                     content_length=len(content)
                 )
-                
+
                 return content
-        
+
         # Use retry logic from utils
         try:
             return await retry_async(
@@ -157,11 +192,11 @@ class SourceAdapter(ABC):
                 error=str(e)
             )
             raise
-    
-    def _parse_date(self, date_str: str) -> Optional[datetime]:
+
+    def _parse_date(self, date_str: str) -> datetime | None:
         """Parse date string to datetime."""
         return parse_date_string(date_str)
-    
+
     def _clean_content(self, content: str) -> str:
         """Clean and normalize content."""
         return clean_text(content)
@@ -170,7 +205,7 @@ class SourceAdapter(ABC):
 class SearchAPIAdapter(SourceAdapter):
     """Search API adapter."""
 
-    def __init__(self, source_config: Dict[str, Any]):
+    def __init__(self, source_config: dict[str, Any]):
         super().__init__(source_config)
         self.api = getattr(source_config, 'api', 'exa')
         self.query = getattr(source_config, 'query', '')
@@ -178,8 +213,8 @@ class SearchAPIAdapter(SourceAdapter):
     async def fetch_articles(
         self,
         start_date: datetime,
-        limit: Optional[int] = None
-    ) -> List[Article]:
+        limit: int | None = None
+    ) -> list[Article]:
         """Fetch articles from a search API."""
         if self.api == 'exa':
             adapter = ExaSearchAPIAdapter(self.config)
@@ -196,29 +231,29 @@ class SearchAPIAdapter(SourceAdapter):
 class ExaSearchAPIAdapter(SearchAPIAdapter):
     """Exa Search API adapter."""
 
-    def __init__(self, source_config: Dict[str, Any]):
+    def __init__(self, source_config: dict[str, Any]):
         super().__init__(source_config)
         # Get search type from global override, source config, or default to 'auto'
         settings = get_settings()
         self.search_type = (
-            settings.search_type_override or 
+            settings.search_type_override or
             getattr(source_config, 'search_type', 'auto')
         )
 
     async def fetch_articles(
         self,
         start_date: datetime,
-        limit: Optional[int] = None
-    ) -> List[Article]:
+        limit: int | None = None
+    ) -> list[Article]:
         if not self.settings.exa_api_key:
             raise ValueError("Exa Search API key is not set.")
 
         exa = Exa(api_key=self.settings.exa_api_key)
-        
+
         # Define approved domains for AI safety news
         approved_domains = [
             "reuters.com",
-            "apnews.com", 
+            "apnews.com",
             "bbc.com",
             "theguardian.com",
             "nytimes.com",
@@ -230,13 +265,13 @@ class ExaSearchAPIAdapter(SearchAPIAdapter):
             "npr.org",
             # High-quality AI safety sources
             "anthropic.com",
-            "openai.com", 
+            "openai.com",
             "deepmind.com",
             "mit.edu",
             "stanford.edu",
             "berkeley.edu"
         ]
-        
+
         # Run synchronous Exa API call in thread executor
         loop = asyncio.get_event_loop()
         results = await loop.run_in_executor(
@@ -254,7 +289,7 @@ class ExaSearchAPIAdapter(SearchAPIAdapter):
 
         return self._parse_search_results(results)
 
-    def _parse_search_results(self, data: Any) -> List[Article]:
+    def _parse_search_results(self, data: Any) -> list[Article]:
         articles = []
         for item in data.results:
             try:
@@ -262,7 +297,7 @@ class ExaSearchAPIAdapter(SearchAPIAdapter):
                     title=item.title or "",
                     url=item.url or "",
                     content=item.text or "",
-                    published_date=item.published_date or datetime.now(timezone.utc).isoformat(),
+                    published_date=item.published_date or datetime.now(UTC).isoformat(),
                     source=item.url or "",
                 )
                 articles.append(article)
@@ -273,37 +308,37 @@ class ExaSearchAPIAdapter(SearchAPIAdapter):
 
 class HTMLAdapter(SourceAdapter):
     """HTML page adapter for sites without RSS."""
-    
-    def __init__(self, source_config: Dict[str, Any]):
+
+    def __init__(self, source_config: dict[str, Any]):
         super().__init__(source_config)
         self.article_selector = getattr(source_config, 'article_selector', 'article')
         self.title_selector = getattr(source_config, 'title_selector', 'h1, h2, .title')
         self.content_selector = getattr(source_config, 'content_selector', '.content, .article-body')
         self.date_selector = getattr(source_config, 'date_selector', 'time, .date')
-    
+
     async def fetch_articles(
-        self, 
-        start_date: datetime, 
-        limit: Optional[int] = None
-    ) -> List[Article]:
+        self,
+        start_date: datetime,
+        limit: int | None = None
+    ) -> list[Article]:
         """Fetch articles from HTML page."""
         try:
             html_content = await self._fetch_url(str(self.url))
             parser = HTMLParser(html_content)
-            
+
             # Find article elements
             article_elements = parser.css(self.article_selector)
-            
+
             articles = []
             for element in article_elements:
                 try:
                     article = await self._parse_html_article(element, start_date)
                     if article:
                         articles.append(article)
-                        
+
                         if limit and len(articles) >= limit:
                             break
-                            
+
                 except Exception as e:
                     logger.warning(
                         "Failed to parse HTML article",
@@ -311,16 +346,16 @@ class HTMLAdapter(SourceAdapter):
                         error=str(e)
                     )
                     continue
-            
+
             logger.info(
                 "HTML articles fetched",
                 source=self.domain,
                 total_elements=len(article_elements),
                 parsed_articles=len(articles)
             )
-            
+
             return articles
-            
+
         except Exception as e:
             logger.error(
                 "Failed to fetch HTML page",
@@ -328,32 +363,32 @@ class HTMLAdapter(SourceAdapter):
                 error=str(e)
             )
             return []
-    
+
     async def _parse_html_article(
-        self, 
-        element: Any, 
+        self,
+        element: Any,
         start_date: datetime
-    ) -> Optional[Article]:
+    ) -> Article | None:
         """Parse individual HTML article element."""
         # Extract title
         title_elem = element.css_first(self.title_selector)
         title = title_elem.text(strip=True) if title_elem else ""
-        
+
         # Extract link
         link_elem = element.css_first('a[href]')
         link = link_elem.attributes.get('href', '') if link_elem else ""
-        
+
         if not title or not link:
             return None
-        
+
         # Make link absolute
         if link.startswith('/'):
             link = urljoin(self.url, link)
-        
+
         # Extract content
         content_elem = element.css_first(self.content_selector)
         content = content_elem.text(strip=True) if content_elem else ""
-        
+
         # Extract date
         date_elem = element.css_first(self.date_selector)
         date_str = ""
@@ -362,13 +397,13 @@ class HTMLAdapter(SourceAdapter):
             date_str = date_elem.attributes.get('datetime', '')
             if not date_str:
                 date_str = date_elem.text(strip=True)
-        
-        published_date = self._parse_date(date_str) if date_str else datetime.now(timezone.utc)
-        
+
+        published_date = self._parse_date(date_str) if date_str else datetime.now(UTC)
+
         # Filter by date
         if published_date < start_date:
             return None
-        
+
         return Article(
             title=self._clean_content(title),
             url=normalize_url(link),
@@ -383,7 +418,7 @@ class SourceHealthMonitor:
     """Monitor source health and availability."""
 
     def __init__(self):
-        self.source_status: Dict[str, Dict[str, Any]] = {}
+        self.source_status: dict[str, dict[str, Any]] = {}
         self.failure_threshold = 3
         self.check_interval = 3600  # 1 hour
 
@@ -391,7 +426,7 @@ class SourceHealthMonitor:
         """Record successful source fetch."""
         self.source_status[name] = {
             'status': 'healthy',
-            'last_success': datetime.now(timezone.utc),
+            'last_success': datetime.now(UTC),
             'response_time': response_time,
             'entry_count': entry_count,
             'consecutive_failures': 0,
@@ -414,7 +449,7 @@ class SourceHealthMonitor:
 
         self.source_status[name]['consecutive_failures'] += 1
         self.source_status[name]['last_error'] = error
-        self.source_status[name]['last_failure'] = datetime.now(timezone.utc)
+        self.source_status[name]['last_failure'] = datetime.now(UTC)
 
         if self.source_status[name]['consecutive_failures'] >= self.failure_threshold:
             self.source_status[name]['status'] = 'unhealthy'
@@ -433,7 +468,7 @@ class SourceHealthMonitor:
                 error=error,
             )
 
-    def get_health_report(self) -> Dict[str, Any]:
+    def get_health_report(self) -> dict[str, Any]:
         """Get health report for all monitored sources."""
         total = len(self.source_status)
         healthy = sum(1 for s in self.source_status.values() if s['status'] == 'healthy')
@@ -441,7 +476,7 @@ class SourceHealthMonitor:
         unhealthy = sum(1 for s in self.source_status.values() if s['status'] == 'unhealthy')
 
         report = {
-            'timestamp': datetime.now(timezone.utc).isoformat(),
+            'timestamp': datetime.now(UTC).isoformat(),
             'summary': {
                 'total': total,
                 'healthy': healthy,
@@ -467,7 +502,7 @@ class SourceHealthMonitor:
         if status['status'] == 'unhealthy':
             last_failure = status.get('last_failure')
             if last_failure:
-                time_since_failure = datetime.now(timezone.utc) - last_failure
+                time_since_failure = datetime.now(UTC) - last_failure
                 if time_since_failure.total_seconds() < self.check_interval:
                     logger.info(
                         "Skipping unhealthy source",
@@ -487,15 +522,15 @@ def get_source_health_monitor() -> SourceHealthMonitor:
 
 class SourceRegistry:
     """Registry for managing news sources and their adapters."""
-    
+
     def __init__(self):
         self.settings = get_settings()
         self.model_config = get_model_config()
-        self.sources: List[Dict[str, Any]] = []
-        self.adapters: Dict[str, SourceAdapter] = {}
+        self.sources: list[dict[str, Any]] = []
+        self.adapters: dict[str, SourceAdapter] = {}
         self.health_monitor = get_source_health_monitor()
         self._load_sources()
-    
+
     def _load_sources(self):
         """Load sources from configuration."""
         try:
@@ -511,8 +546,8 @@ class SourceRegistry:
         except Exception as e:
             logger.error("Failed to load sources", error=str(e))
             self.sources = []
-    
-    def create_adapter(self, source_config: Dict[str, Any]) -> SourceAdapter:
+
+    def create_adapter(self, source_config: dict[str, Any]) -> SourceAdapter:
         """Create appropriate adapter for source."""
         if hasattr(source_config, 'query'):
             adapter_type = 'search'
@@ -527,17 +562,17 @@ class SourceRegistry:
             return SearchAPIAdapter(source_config)
         else:
             raise ValueError(f"Unknown adapter type: {adapter_type}")
-    
+
     async def fetch_all_articles(
-        self, 
-        start_date: datetime, 
-        limit_per_source: Optional[int] = None
-    ) -> List[Article]:
+        self,
+        start_date: datetime,
+        limit_per_source: int | None = None
+    ) -> list[Article]:
         """Fetch articles from all sources."""
         if not self.sources:
             logger.warning("No sources configured")
             return []
-        
+
         # Create semaphore for concurrency control
         semaphore = AsyncSemaphore(
             global_limit=self.settings.global_parallel,
@@ -546,11 +581,11 @@ class SourceRegistry:
                 for source in self.sources if hasattr(source, 'domain')
             }
         )
-        
-        async def fetch_source(source_config: Dict[str, Any]) -> List[Article]:
+
+        async def fetch_source(source_config: dict[str, Any]) -> list[Article]:
             """Fetch articles from a single source."""
             source_name = getattr(source_config, 'name', getattr(source_config, 'domain', 'unknown'))
-            
+
             async with semaphore:
                 try:
                     adapter = self.create_adapter(source_config)
@@ -560,7 +595,7 @@ class SourceRegistry:
                                 start_date,
                                 limit=limit_per_source
                             )
-                            
+
                             logger.info(
                                 **log_processing_stage(
                                     stage=f"fetch_{source_name}",
@@ -568,9 +603,9 @@ class SourceRegistry:
                                     output_count=len(articles)
                                 )
                             )
-                            
+
                             return articles
-                            
+
                 except Exception as e:
                     logger.error(
                         "Failed to fetch from source",
@@ -578,12 +613,12 @@ class SourceRegistry:
                         error=str(e)
                     )
                     return []
-        
+
         # Fetch from all sources concurrently
         with PerformanceLogger("fetch_all_sources", logger):
             tasks = [fetch_source(source) for source in self.sources]
             results = await asyncio.gather(*tasks, return_exceptions=True)
-        
+
         # Collect all articles
         all_articles = []
         for result in results:
@@ -591,7 +626,7 @@ class SourceRegistry:
                 all_articles.extend(result)
             elif isinstance(result, Exception):
                 logger.error("Source fetch failed", error=str(result))
-        
+
         logger.info(
             **log_processing_stage(
                 stage="fetch_all_sources",
@@ -599,7 +634,7 @@ class SourceRegistry:
                 output_count=len(all_articles)
             )
         )
-        
+
         return all_articles
 
 
@@ -616,10 +651,10 @@ def get_source_registry() -> SourceRegistry:
 
 
 async def gather_articles(
-    start_date: str, 
-    mock: bool = False, 
-    limit_per_source: Optional[int] = None
-) -> List[Article]:
+    start_date: str,
+    mock: bool = False,
+    limit_per_source: int | None = None
+) -> list[Article]:
     """Gather articles from all configured sources.
     
     Args:
@@ -632,31 +667,31 @@ async def gather_articles(
     """
     if mock:
         return _generate_mock_articles(start_date)
-    
+
     # Parse start date
     start_dt = parse_date_string(start_date)
     if not start_dt:
         raise ValueError(f"Invalid start date: {start_date}")
-    
+
     # Ensure timezone
     if start_dt.tzinfo is None:
-        start_dt = start_dt.replace(tzinfo=timezone.utc)
-    
+        start_dt = start_dt.replace(tzinfo=UTC)
+
     # Fetch articles
     registry = get_source_registry()
     articles = await registry.fetch_all_articles(start_dt, limit_per_source)
-    
+
     return articles
 
 
-def _generate_mock_articles(start_date: str) -> List[Article]:
+def _generate_mock_articles(start_date: str) -> list[Article]:
     """Generate mock articles for testing."""
     mock_articles = [
         Article(
             title="EU Proposes New AI Safety Regulations",
             url="https://example.com/eu-ai-safety",
             content="The European Union has proposed comprehensive new regulations for AI safety, including mandatory risk assessments for high-risk AI systems and strict oversight requirements.",
-            published_date=datetime.now(timezone.utc),
+            published_date=datetime.now(UTC),
             source="example.com",
             category="Policy"
         ),
@@ -664,7 +699,7 @@ def _generate_mock_articles(start_date: str) -> List[Article]:
             title="OpenAI Releases Safety Framework for Large Language Models",
             url="https://example.com/openai-safety",
             content="OpenAI has published a new safety framework outlining best practices for developing and deploying large language models, with emphasis on alignment and robustness testing.",
-            published_date=datetime.now(timezone.utc),
+            published_date=datetime.now(UTC),
             source="example.com",
             category="Technology"
         ),
@@ -672,12 +707,12 @@ def _generate_mock_articles(start_date: str) -> List[Article]:
             title="NIST Updates AI Risk Management Guidelines",
             url="https://example.com/nist-ai-risk",
             content="The National Institute of Standards and Technology has updated its AI Risk Management Framework to include new guidance on algorithmic bias detection and mitigation strategies.",
-            published_date=datetime.now(timezone.utc),
+            published_date=datetime.now(UTC),
             source="nist.gov",
             category="Policy"
         )
     ]
-    
+
     return mock_articles
 
 
@@ -688,5 +723,5 @@ if __name__ == "__main__":
         print(f"Fetched {len(articles)} articles")
         for article in articles:
             print(f"- {article['title']} ({article['source']})")
-    
+
     asyncio.run(test_sources())

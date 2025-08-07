@@ -1,0 +1,177 @@
+name: Security Scanning
+
+on:
+  push:
+    branches: [ master, main ]
+  pull_request:
+    branches: [ master, main ]
+  schedule:
+    # Run security scans daily at 2 AM UTC
+    - cron: '0 2 * * *'
+
+permissions:
+  contents: read
+  security-events: write
+
+jobs:
+  dependency-scan:
+    name: Dependency Security Scan
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+        
+    - name: Install Poetry
+      uses: snok/install-poetry@v1
+      with:
+        virtualenvs-create: true
+        virtualenvs-in-project: true
+        
+    - name: Install dependencies
+      run: |
+        poetry install --no-interaction --no-ansi
+        
+    - name: Run Safety scan
+      run: |
+        poetry add --group dev safety
+        poetry run safety check --json --output safety-report.json || true
+        
+    - name: Run pip-audit
+      run: |
+        poetry add --group dev pip-audit
+        poetry run pip-audit --format=json --output=pip-audit-report.json || true
+        
+    - name: Upload Safety report
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: safety-report
+        path: safety-report.json
+        
+    - name: Upload pip-audit report
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: pip-audit-report
+        path: pip-audit-report.json
+
+  code-scan:
+    name: Code Security Scan
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+        
+    - name: Install Poetry
+      uses: snok/install-poetry@v1
+      
+    - name: Install dependencies
+      run: |
+        poetry install --no-interaction --no-ansi
+        
+    - name: Run Bandit security scan
+      run: |
+        poetry add --group dev bandit
+        poetry run bandit -r aisafety_news/ -f json -o bandit-report.json || true
+        
+    - name: Run Semgrep scan
+      uses: returntocorp/semgrep-action@v1
+      with:
+        config: >-
+          p/python
+          p/security-audit
+          p/secrets
+        generateSarif: "1"
+        
+    - name: Upload Bandit report
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: bandit-report
+        path: bandit-report.json
+        
+    - name: Upload SARIF file
+      uses: github/codeql-action/upload-sarif@v3
+      if: always()
+      with:
+        sarif_file: semgrep.sarif
+
+  secret-scan:
+    name: Secret Detection Scan
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0  # Full history for secret scanning
+        
+    - name: Run TruffleHog scan
+      uses: trufflesecurity/trufflehog@main
+      with:
+        path: ./
+        base: main
+        head: HEAD
+        extra_args: --debug --only-verified
+
+  dependency-review:
+    name: Dependency Review
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Dependency Review
+      uses: actions/dependency-review-action@v4
+      with:
+        fail-on-severity: moderate
+        deny-licenses: GPL-2.0, GPL-3.0
+        
+  security-summary:
+    name: Security Summary
+    runs-on: ubuntu-latest
+    needs: [dependency-scan, code-scan, secret-scan]
+    if: always()
+    
+    steps:
+    - name: Download all artifacts
+      uses: actions/download-artifact@v4
+      
+    - name: Generate security summary
+      run: |
+        echo "# Security Scan Summary" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "| Scan Type | Status |" >> $GITHUB_STEP_SUMMARY
+        echo "|-----------|---------|" >> $GITHUB_STEP_SUMMARY
+        
+        # Check if artifacts exist and add status
+        if [ -f "safety-report/safety-report.json" ]; then
+          echo "| Dependency Safety | ✅ Completed |" >> $GITHUB_STEP_SUMMARY
+        else
+          echo "| Dependency Safety | ❌ Failed |" >> $GITHUB_STEP_SUMMARY
+        fi
+        
+        if [ -f "bandit-report/bandit-report.json" ]; then
+          echo "| Code Security | ✅ Completed |" >> $GITHUB_STEP_SUMMARY
+        else
+          echo "| Code Security | ❌ Failed |" >> $GITHUB_STEP_SUMMARY
+        fi
+        
+        echo "| Secret Detection | ${{ needs.secret-scan.result == 'success' && '✅ Completed' || '❌ Failed' }} |" >> $GITHUB_STEP_SUMMARY
+        
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "📊 **Review the individual scan reports in the workflow artifacts.**" >> $GITHUB_STEP_SUMMARY

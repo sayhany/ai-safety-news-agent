@@ -4,18 +4,18 @@ import json
 import logging
 import sys
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any
 
 import structlog
-from structlog import processors, stdlib, testing
+from structlog import processors, stdlib
 
 from .config import get_settings
 
 
 def setup_logging(
-    log_level: Optional[str] = None,
-    json_logging: Optional[bool] = None,
-    log_file: Optional[Path] = None
+    log_level: str | None = None,
+    json_logging: bool | None = None,
+    log_file: Path | None = None
 ) -> None:
     """Configure structured logging for the application.
     
@@ -25,18 +25,18 @@ def setup_logging(
         log_file: Optional log file path
     """
     settings = get_settings()
-    
+
     # Use provided values or fall back to settings
     log_level = log_level or settings.log_level
     json_logging = json_logging if json_logging is not None else settings.json_logging
-    
+
     # Configure standard library logging
     logging.basicConfig(
         format="%(message)s",
         stream=sys.stdout,
         level=getattr(logging, log_level.upper()),
     )
-    
+
     # Processor chain for structured logging
     processors_list = [
         # Add log level and timestamp
@@ -48,7 +48,7 @@ def setup_logging(
         processors.StackInfoRenderer(),
         processors.format_exc_info,
     ]
-    
+
     if json_logging:
         # JSON output for production
         processors_list.append(
@@ -64,7 +64,7 @@ def setup_logging(
             ),
             stdlib.ProcessorFormatter.wrap_for_formatter,
         ])
-    
+
     # Configure structlog
     structlog.configure(
         processors=processors_list,
@@ -72,20 +72,20 @@ def setup_logging(
         logger_factory=stdlib.LoggerFactory(),
         cache_logger_on_first_use=True,
     )
-    
+
     # Set up file logging if specified
     if log_file:
         log_file.parent.mkdir(parents=True, exist_ok=True)
         file_handler = logging.FileHandler(log_file)
         file_handler.setLevel(getattr(logging, log_level.upper()))
-        
+
         if json_logging:
             file_formatter = logging.Formatter('%(message)s')
         else:
             file_formatter = logging.Formatter(
                 '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
             )
-        
+
         file_handler.setFormatter(file_formatter)
         logging.getLogger().addHandler(file_handler)
 
@@ -104,14 +104,14 @@ def get_logger(name: str) -> structlog.stdlib.BoundLogger:
 
 class LoggingMixin:
     """Mixin class to add logging capabilities to any class."""
-    
+
     @property
     def logger(self) -> structlog.stdlib.BoundLogger:
         """Get logger for this class."""
         return get_logger(self.__class__.__module__ + "." + self.__class__.__name__)
 
 
-def log_function_call(func_name: str, **kwargs: Any) -> Dict[str, Any]:
+def log_function_call(func_name: str, **kwargs: Any) -> dict[str, Any]:
     """Create a standardized log entry for function calls.
     
     Args:
@@ -131,10 +131,10 @@ def log_function_call(func_name: str, **kwargs: Any) -> Dict[str, Any]:
 def log_api_request(
     method: str,
     url: str,
-    status_code: Optional[int] = None,
-    response_time: Optional[float] = None,
+    status_code: int | None = None,
+    response_time: float | None = None,
     **kwargs: Any
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Create a standardized log entry for API requests.
     
     Args:
@@ -153,13 +153,13 @@ def log_api_request(
         "url": url,
         **kwargs
     }
-    
+
     if status_code is not None:
         log_data["status_code"] = status_code
-    
+
     if response_time is not None:
         log_data["response_time"] = response_time
-    
+
     return log_data
 
 
@@ -167,9 +167,9 @@ def log_processing_stage(
     stage: str,
     input_count: int,
     output_count: int,
-    duration: Optional[float] = None,
+    duration: float | None = None,
     **kwargs: Any
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Create a standardized log entry for processing stages.
     
     Args:
@@ -189,18 +189,18 @@ def log_processing_stage(
         "output_count": output_count,
         **kwargs
     }
-    
+
     if duration is not None:
         log_data["duration"] = duration
-    
+
     return log_data
 
 
 def log_error(
     error: Exception,
-    context: Optional[str] = None,
+    context: str | None = None,
     **kwargs: Any
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Create a standardized log entry for errors.
     
     Args:
@@ -217,28 +217,28 @@ def log_error(
         "error_message": str(error),
         **kwargs
     }
-    
+
     if context:
         log_data["context"] = context
-    
+
     return log_data
 
 
 # Performance monitoring helpers
 class PerformanceLogger:
     """Context manager for logging performance metrics."""
-    
+
     def __init__(self, operation: str, logger: structlog.stdlib.BoundLogger):
         self.operation = operation
         self.logger = logger
-        self.start_time: Optional[float] = None
-    
+        self.start_time: float | None = None
+
     def __enter__(self) -> "PerformanceLogger":
         import time
         self.start_time = time.time()
         self.logger.info("operation_started", operation=self.operation)
         return self
-    
+
     def __exit__(self, exc_type, exc_val, exc_tb) -> None:
         import time
         if self.start_time is not None:
