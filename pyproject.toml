@@ -35,9 +35,6 @@ mypy = "^1.10"
 coverage = "^7.5"
 pytest-cov = "^4.1"
 aresponses = "^3.0.0"
-safety = "^3.0"
-bandit = "^1.7"
-pip-audit = "^2.6"
 
 [tool.poetry.scripts]
 aisafety-news = "aisafety_news.orchestrator:cli"
