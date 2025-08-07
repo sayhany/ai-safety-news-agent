@@ -47,6 +47,9 @@ class Settings(BaseSettings):
     llm_model_override: Optional[str] = Field(
         None, description="Override for the LLM model"
     )
+    search_type_override: Optional[str] = Field(
+        None, description="Override for Exa search type (auto, neural, keyword, fast)"
+    )
     openai_api_key: Optional[str] = Field(None, description="OpenAI API key for LLM and embeddings (primary)")
     brave_api_key: Optional[str] = Field(None, description="Brave Search API key")
     bing_api_key: Optional[str] = Field(None, description="Bing Search API key")

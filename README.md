@@ -137,6 +137,17 @@ poetry run aistr-news-agent 2024-01-15 --max-articles 10
 poetry run aistr-news-agent 2024-01-15 --model "gpt-4o"
 ```
 
+**Choose search type:**
+```bash
+poetry run aistr-news-agent 2024-01-15 --search-type neural
+```
+
+Available search types:
+- `auto` (default): Intelligently combines neural and keyword search
+- `neural`: AI-powered semantic search for contextual understanding  
+- `keyword`: Traditional keyword-based search for specific terms
+- `fast`: Optimized for speed (p50 latency < 425ms)
+
 **Enable debug logging:**
 ```bash
 poetry run aistr-news-agent 2024-01-15 --log-level DEBUG
@@ -157,6 +168,7 @@ poetry run aistr-news-agent --validate-config
 | `--output` | Save newsletter to specific file | `--output newsletter.md` |
 | `--log-level` | Logging verbosity (DEBUG, INFO, WARNING, ERROR) | `--log-level DEBUG` |
 | `--model` | Override default LLM model | `--model "openai/gpt-4o"` |
+| `--search-type` | Search type for Exa API (auto, neural, keyword, fast) | `--search-type neural` |
 | `--validate-config` | Validate configuration and exit | `--validate-config` |
 
 ## ⚙️ Configuration

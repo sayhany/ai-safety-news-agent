@@ -198,8 +198,12 @@ class ExaSearchAPIAdapter(SearchAPIAdapter):
 
     def __init__(self, source_config: Dict[str, Any]):
         super().__init__(source_config)
-        # Get search type from config, default to 'auto' for intelligent combination
-        self.search_type = getattr(source_config, 'search_type', 'auto')
+        # Get search type from global override, source config, or default to 'auto'
+        settings = get_settings()
+        self.search_type = (
+            settings.search_type_override or 
+            getattr(source_config, 'search_type', 'auto')
+        )
 
     async def fetch_articles(
         self,

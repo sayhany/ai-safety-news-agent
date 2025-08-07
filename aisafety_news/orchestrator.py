@@ -211,6 +211,11 @@ async def run_pipeline(
 )
 @click.option("--api-key", help="Google AI API key to use.")
 @click.option("--model", help="LLM model to use (e.g., 'gemini-2.5-flash').")
+@click.option(
+    "--search-type", 
+    type=click.Choice(["auto", "neural", "keyword", "fast"]), 
+    help="Search type for Exa API: auto (default), neural, keyword, or fast"
+)
 def cli(
     start_date,
     mock,
@@ -221,6 +226,7 @@ def cli(
     validate_config_flag,
     api_key,
     model,
+    search_type,
 ):
     """AI Safety Newsletter Agent - Generate AI safety newsletters from news sources."""
     # Set log level to suppress noise unless verbose mode is enabled
@@ -254,6 +260,8 @@ def cli(
             settings.llm_model_override = model
         if max_articles:
             settings.max_articles = max_articles
+        if search_type:
+            settings.search_type_override = search_type
 
         if validate_config_flag:
             if validate_config(settings):
