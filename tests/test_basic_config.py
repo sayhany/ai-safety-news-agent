@@ -51,19 +51,19 @@ def test_models_yaml_config():
     print("TEST 2: Models.yaml Configuration")
     print("=" * 60)
     
-    models_file = Path("models.yaml")
+    models_file = Path("config/models.yaml")
     if not models_file.exists():
-        print("❌ models.yaml file not found")
+        print("❌ config/models.yaml file not found")
         return False
     
-    print("✅ models.yaml file exists")
+    print("✅ config/models.yaml file exists")
     
     try:
         with open(models_file, 'r') as f:
             config = yaml.safe_load(f)
         
         if 'search_sources' not in config:
-            print("❌ search_sources section not found in models.yaml")
+            print("❌ search_sources section not found in config/models.yaml")
             return False
         
         search_sources = config['search_sources']
@@ -91,7 +91,7 @@ def test_models_yaml_config():
         return True
         
     except Exception as e:
-        print(f"❌ Error reading models.yaml: {e}")
+        print(f"❌ Error reading config/models.yaml: {e}")
         return False
 
 
@@ -154,7 +154,7 @@ def test_search_queries():
     print("=" * 60)
     
     try:
-        with open("models.yaml", 'r') as f:
+        with open("config/models.yaml", 'r') as f:
             config = yaml.safe_load(f)
         
         search_sources = config.get('search_sources', [])

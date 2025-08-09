@@ -1,6 +1,7 @@
 """News source registry and adapter framework."""
 
 import asyncio
+import time
 from abc import ABC, abstractmethod
 from datetime import UTC, datetime
 from typing import Any
@@ -24,6 +25,29 @@ from ..utils import (
 )
 
 logger = get_logger(__name__)
+
+# Rate limiter for Exa API (5 requests per second)
+class ExaRateLimiter:
+    """Rate limiter for Exa API calls."""
+    
+    def __init__(self, requests_per_second: int = 5):
+        self.requests_per_second = requests_per_second
+        self.min_interval = 1.0 / requests_per_second
+        self.last_request_time = 0
+        self.lock = asyncio.Lock()
+    
+    async def acquire(self):
+        """Wait if necessary to respect rate limit."""
+        async with self.lock:
+            current_time = time.time()
+            time_since_last = current_time - self.last_request_time
+            if time_since_last < self.min_interval:
+                wait_time = self.min_interval - time_since_last
+                await asyncio.sleep(wait_time)
+            self.last_request_time = time.time()
+
+# Global rate limiter for Exa API
+exa_rate_limiter = ExaRateLimiter(requests_per_second=4)  # Use 4 to be safe
 
 
 class Article(dict[str, Any]):
@@ -272,6 +296,9 @@ class ExaSearchAPIAdapter(SearchAPIAdapter):
             "berkeley.edu"
         ]
 
+        # Apply rate limiting before making API call
+        await exa_rate_limiter.acquire()
+        
         # Run synchronous Exa API call in thread executor
         loop = asyncio.get_event_loop()
         results = await loop.run_in_executor(

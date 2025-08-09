@@ -35,7 +35,7 @@ RUN poetry install --only=main --no-dev
 
 # Copy application code
 COPY aisafety_news/ ./aisafety_news/
-COPY models.yaml ./
+COPY config/ ./config/
 COPY templates/ ./templates/
 
 # Create necessary directories

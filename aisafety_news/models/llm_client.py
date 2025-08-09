@@ -134,19 +134,31 @@ class LLMClient:
             })
 
         try:
-            response = await self._openai_client.chat.completions.create(
-                model=openai_model,
-                messages=openai_messages,
-                temperature=temperature or self.model_settings.temperature,
-                max_tokens=max_tokens or self.model_settings.max_tokens,
-                timeout=timeout or self.model_settings.timeout_seconds
-            )
+            # Build the request parameters
+            request_params = {
+                "model": openai_model,
+                "messages": openai_messages,
+                "timeout": timeout or self.model_settings.timeout_seconds
+            }
+            
+            # Handle model-specific parameter requirements
+            if openai_model.startswith("gpt-5") or openai_model.startswith("o1"):
+                # GPT-5 and O1 models: use max_completion_tokens and fixed temperature
+                request_params["max_completion_tokens"] = max_tokens or self.model_settings.max_tokens
+                request_params["temperature"] = 1  # These models only support temperature=1
+            else:
+                # Other models: use standard parameters
+                request_params["max_tokens"] = max_tokens or self.model_settings.max_tokens
+                request_params["temperature"] = temperature or self.model_settings.temperature
+            
+            response = await self._openai_client.chat.completions.create(**request_params)
 
             response_time = time.time() - start_time
             content = response.choices[0].message.content
 
-            if not content:
-                raise LLMError("Empty response content from OpenAI")
+            # Handle empty/None content (GPT-5 sometimes returns None)
+            if content is None:
+                content = ""
 
             logger.info(
                 "OpenAI API request successful",

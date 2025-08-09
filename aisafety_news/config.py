@@ -132,7 +132,7 @@ class Settings(BaseSettings):
 class ModelConfig:
     """Model configuration loader."""
 
-    def __init__(self, config_path: str | Path = "models.yaml"):
+    def __init__(self, config_path: str | Path = "config/models.yaml"):
         self.config_path = Path(config_path)
         self._config: dict[str, Any] = {}
         self.load_config()
